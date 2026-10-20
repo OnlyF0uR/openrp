@@ -89,7 +89,12 @@ impl Chat {
             items,
             empty: "Loading…".to_owned(),
         };
-        let models = |count: usize| format!("Search {} models", group_digits(count as u64));
+        // Some providers list no models: their names are typed.
+        let models = |count: usize| match count {
+            0 => "Type a model's name".to_owned(),
+            n => format!("Search {} models", group_digits(n as u64)),
+        };
+        let typed = self.typed_model().map(|id| MenuItem::new(&format!("Use “{id}”"), "Typed model"));
         match menu {
             Menu::Model => {
                 let items = self
@@ -100,6 +105,7 @@ impl Chat {
                         search: m.id.clone(),
                         ..MenuItem::new(model_label(m), &price(m))
                     })
+                    .chain(typed)
                     .collect();
                 let mut content =
                     content(anchors[0], 360.0, false, (&models(self.models.len()), "Input / output per 1M"), items);
@@ -182,6 +188,7 @@ impl Chat {
                         search: m.id.clone(),
                         ..MenuItem::new(model_label(m), &price(m))
                     }))
+                    .chain(typed)
                     .collect();
                 content(self.utility_anchor, 360.0, true, (&models(self.models.len()), "Background model"), items)
             }
@@ -272,14 +279,21 @@ impl Chat {
         true
     }
 
+    /// What is typed into a model menu's search, unless a listed model has
+    /// that id: the last row uses it, for models the provider does not list.
+    fn typed_model(&self) -> Option<String> {
+        let typed = self.menu_query.text().trim();
+        (!typed.is_empty() && !self.models.iter().any(|m| m.id == typed)).then(|| typed.to_owned())
+    }
+
     /// Picks row `index` of `menu` (before searching).
     fn choose(&mut self, menu: Menu, index: usize, actions: &mut Vec<Action>) {
         self.menu = None;
         match menu {
             Menu::Model => {
-                if let Some(model) = self.models.get(index) {
-                    self.model.clone_from(&model.id);
-                    actions.push(Action::SelectModel(model.id.clone()));
+                if let Some(model) = self.models.get(index).map(|m| m.id.clone()).or_else(|| self.typed_model()) {
+                    actions.push(Action::SelectModel(model.clone()));
+                    self.model = model;
                 }
             }
             Menu::Reasoning => {
@@ -317,7 +331,10 @@ impl Chat {
             }
             Menu::Personas => self.play_as(index),
             Menu::UtilityModel => {
-                let model = index.checked_sub(1).and_then(|i| self.models.get(i)).map(|m| m.id.clone());
+                let model = match index {
+                    0 => None,
+                    i => self.models.get(i - 1).map(|m| m.id.clone()).or_else(|| self.typed_model()),
+                };
                 self.utility_model.clone_from(&model);
                 actions.push(Action::SetUtilityModel(model));
             }
@@ -471,6 +488,20 @@ mod tests {
         assert_eq!(search(&items, "MIRA fantasy"), [0], "every word, across name and tags");
         assert_eq!(search(&items, "army"), [1]);
         assert!(search(&items, "nobody").is_empty());
+    }
+
+    #[test]
+    fn a_model_can_be_typed_when_none_is_listed() {
+        let mut chat = Chat::new(None, Reasoning::Auto, Vec::new());
+        chat.menu = Some(Menu::Model);
+        chat.menu_query.insert(" inworld-llm ");
+        let content = chat.menu_content(Menu::Model, [Rect::default(); 4]);
+        let rows = search(&content.items, chat.menu_query.text());
+        assert_eq!(rows.len(), 1, "the typed name is offered");
+        let mut actions = Vec::new();
+        chat.choose(Menu::Model, rows[0], &mut actions);
+        assert_eq!(chat.model, "inworld-llm");
+        assert!(matches!(actions.as_slice(), [Action::SelectModel(m)] if m == "inworld-llm"));
     }
 
     #[test]
