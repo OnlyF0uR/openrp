@@ -95,6 +95,12 @@ impl Face {
         (f32::from(self.inner.ascender()), f32::from(self.inner.descender()))
     }
 
+    /// Height of capital letters in font units (0.7 em when the font
+    /// does not say).
+    pub fn cap_height(&self) -> f32 {
+        self.inner.capital_height().map_or(0.7 * self.units_per_em(), f32::from)
+    }
+
     /// Advance width in font units.
     pub fn advance(&self, glyph: u16) -> f32 {
         f32::from(self.inner.glyph_hor_advance(GlyphId(glyph)).unwrap_or(0))

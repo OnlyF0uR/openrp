@@ -44,7 +44,7 @@ use crate::editor::Editor;
 use crate::form::{FIELD_PAD, Fields};
 use crate::image::Lookup;
 use crate::paint::{Painter, Rect, fade, mix};
-use crate::text::{Align, Style};
+use crate::text::{Align, FontId, Fonts, Style, TextLayout};
 use crate::theme;
 use crate::ui::{ButtonStyle, Ui, button, chevron, id};
 
@@ -1968,8 +1968,20 @@ pub fn portrait(p: &mut Painter, path: Option<&str>, name: &str, rect: Rect, rad
     let ink = theme::character_color(&p.theme, name);
     p.rect(rect, mix(p.theme.surface, ink, 0.2), radius);
     let initial: String = name.trim().chars().next().map(char::to_uppercase).into_iter().flatten().collect();
-    let style = Style { font: crate::text::FontId::SERIF_BOLD, ..Style::semibold(rect.h * 0.46) };
-    p.label_centered(if initial.is_empty() { "?" } else { &initial }, style, rect, ink);
+    let style = Style { font: FontId::SERIF_BOLD, ..Style::semibold(rect.h * 0.46) };
+    let layout = p.layout(if initial.is_empty() { "?" } else { &initial }, style, None);
+    let (x, y) = caps_centred(p.fonts, &layout, style, rect);
+    p.text(&layout, x, y, ink);
+}
+
+/// Where to draw `layout`, one line in `style`, so its capitals sit in the
+/// middle of `rect`. Centring its line box instead would set a serif's
+/// capitals low: Literata's ascender is far taller than its descender.
+pub fn caps_centred(fonts: &Fonts, layout: &TextLayout, style: Style, rect: Rect) -> (f32, f32) {
+    let face = fonts.face(style.font);
+    let cap = face.cap_height() / face.units_per_em() * style.size;
+    let x = rect.x + (rect.w - layout.width()) * 0.5;
+    (x, rect.y + rect.h * 0.5 - (layout.baseline() - cap * 0.5))
 }
 
 /// The page's title bar over `area`, its title between `title_x` and
@@ -2265,6 +2277,29 @@ mod tests {
         view.save_persona("  ", "Nobody.", "", &mut actions);
         assert_eq!(actions.len(), 2, "a persona needs a name");
         assert!(view.persona_named("RUE").is_some_and(|p| p.description == "Quick."));
+    }
+
+    #[test]
+    fn initials_sit_in_the_middle_of_their_portrait() {
+        let fonts = Fonts::load();
+        let mut atlas = crate::text::GlyphAtlas::default();
+        for side in [38.0, 220.0] {
+            let rect = Rect::new(10.0, 20.0, side, side);
+            let style = Style { font: FontId::SERIF_BOLD, ..Style::semibold(side * 0.46) };
+            // `H` has flat tops and feet: its ink spans exactly the capitals.
+            let layout = TextLayout::new(&fonts, "H", style, None, 1.0);
+            let origin = caps_centred(&fonts, &layout, style, rect);
+            let mut ink = (f32::MAX, f32::MIN);
+            let visible = [0.0, 0.0, 1000.0, 1000.0];
+            assert!(layout.place(&fonts, &mut atlas, origin, (Align::Left, 0.0), visible, |g| {
+                ink = (ink.0.min(g.rect[1]), ink.1.max(g.rect[1] + g.rect[3]));
+            }));
+            let middle = rect.y + side * 0.5;
+            assert!((f32::midpoint(ink.0, ink.1) - middle).abs() <= 1.0, "{side}: ink {ink:?}, middle {middle}");
+            // Centring the line box instead sets it visibly low on a big card.
+            let boxed = rect.y + (side - layout.height()) * 0.5;
+            assert!(side < 100.0 || boxed - origin.1 > 5.0, "{side}: {boxed} vs {}", origin.1);
+        }
     }
 
     #[test]
