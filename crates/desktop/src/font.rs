@@ -90,11 +90,6 @@ impl Face {
         f32::from(self.inner.units_per_em())
     }
 
-    /// Ascender and descender (negative) in font units.
-    pub fn vertical_metrics(&self) -> (f32, f32) {
-        (f32::from(self.inner.ascender()), f32::from(self.inner.descender()))
-    }
-
     /// Height of capital letters in font units (0.7 em when the font
     /// does not say).
     pub fn cap_height(&self) -> f32 {

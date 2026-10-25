@@ -22,7 +22,7 @@ use winit::window::CursorIcon;
 
 use super::{Chat, Entry, Load, Menu, MenuItem, Page, tools};
 use crate::app::Action;
-use crate::library::{Kind, Record, caps_centred, portrait};
+use crate::library::{Kind, Record, portrait};
 use crate::paint::{Painter, Rect, fade, mix};
 use crate::text::Style;
 use crate::theme;
@@ -358,8 +358,7 @@ impl Chat {
             let style = Style { font: crate::text::FontId::SERIF_BOLD, ..theme::LABEL };
             let mut name = p.layout(&world_name, style, None);
             name.truncate(p.fonts, content_w - 24.0);
-            let (_, name_y) = caps_centred(p.fonts, &name, style, band);
-            p.text(&name, band.x + 12.0, name_y, t.on_scrim);
+            p.text(&name, band.x + 12.0, band.y + (band.h - name.height()) * 0.5, t.on_scrim);
             p.bordered(rect, [0.0; 4], theme::RADIUS + 2.0, 1.0, fade(t.border_strong, 0.6));
             y += BANNER_H + 18.0;
         } else {
