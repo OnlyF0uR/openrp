@@ -63,8 +63,7 @@ cargo clippy --workspace --all-targets
   story is made of: the world's picture, the current scene (click it to change it yourself),
   **Memories** and the **Author's note**, who you play, and the cast, in the scene and
   elsewhere, each with a portrait and the first line of their description. Click a member to
-  edit them; hovering one shows **Away** (or **Bring in**) to move them and a ⋯ menu to store
-  or delete them. **+ Add characters** opens a picker of your library (the story keeps its own
+  move them into the scene or out of it; their ⋯ menu edits, stores or deletes them. **+ Add characters** opens a picker of your library (the story keeps its own
   copy, so editing or deleting them in the library changes no story): every click adds one and
   it stays open for more, and its foot creates someone or has the AI generate one for you to
   review. Deleting a world deletes its stories: its Delete asks again and says how many.

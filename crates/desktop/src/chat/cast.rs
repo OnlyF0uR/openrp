@@ -7,10 +7,11 @@
 //! header's Cast button shows and hides it), holds everything the story is
 //! made of: the world's banner, the scene (set by the model, or by clicking
 //! it), the buttons opening the memories and the author's note, who the user
-//! plays, and the cast, in the scene and elsewhere, each with a button to
-//! move them and a menu (store in Characters, edit, delete; see
-//! `dialog.rs`). Clicking a member edits them. Its footer opens the picker
-//! that adds characters from the library, or creates or generates one.
+//! plays, and the cast, in the scene and elsewhere. Clicking a member moves
+//! them into the scene or out of it; their ⋯ menu edits them, stores them
+//! in Characters or deletes them (see `dialog.rs`). Its footer opens the
+//! picker that adds characters from the library, or creates or generates
+//! one.
 //!
 //! A story nobody has written in yet opens with a greeting: the first
 //! message of the first character in the scene whose library character has
@@ -47,9 +48,7 @@ const STACK: usize = 4;
 /// What was clicked on a cast member's row.
 #[derive(Clone, Copy)]
 enum RowClick {
-    /// The row: edit them.
-    Edit,
-    /// Move them into the scene or out of it.
+    /// The row: move them into the scene or out of it.
     Move,
     /// Their menu, opened from these dots.
     Menu(Rect),
@@ -182,8 +181,8 @@ impl Chat {
         self.menu = Some(Menu::CastLibrary);
     }
 
-    /// Rows of cast member `member`'s menu: storing them updates the library
-    /// character they were cast from, if there is one.
+    /// Rows of cast member `member`'s menu: editing them first; storing them
+    /// updates the library character they were cast from, if there is one.
     pub(super) fn member_menu(&mut self, member: usize) -> Vec<MenuItem> {
         let id = self.current().cast.get(member).map(|m| m.id.clone()).unwrap_or_default();
         let store = if self.library.get(Kind::Character, &id).is_some() {
@@ -192,8 +191,8 @@ impl Chat {
             "Store in Characters"
         };
         vec![
+            MenuItem::new("Edit…", "In this story"),
             MenuItem::new(store, "For other stories"),
-            MenuItem::new("Edit…", ""),
             MenuItem::new("Delete", "From this story"),
         ]
     }
@@ -201,12 +200,12 @@ impl Chat {
     /// Applies row `index` of cast member `member`'s menu.
     pub(super) fn member_menu_picked(&mut self, member: usize, index: usize, actions: &mut Vec<Action>) {
         match index {
-            0 => {
+            0 => self.edit_member(member),
+            1 => {
                 if let Some(m) = self.current().cast.get(member).cloned() {
                     self.library.store_character(&m, actions);
                 }
             }
-            1 => self.edit_member(member),
             _ if member < self.current().cast.len() => self.change_cast(actions, |cast| {
                 cast.remove(member);
             }),
@@ -403,16 +402,11 @@ impl Chat {
             if memories == 0 { format!("Memories{updating}") } else { format!("Memories · {memories}{updating}") };
         let note_label = if has_note { "Note ✓" } else { "Author's note" };
         let half = ((content_w - 8.0) * 0.5).floor();
+        // Always drawn enabled; only a click inside the panel's body counts.
         let open_memories =
-            button(p, ui, Rect::new(x, y, half, 30.0), &memory_label, ButtonStyle::Secondary, interactive);
-        let open_note = button(
-            p,
-            ui,
-            Rect::new(x + content_w - half, y, half, 30.0),
-            note_label,
-            ButtonStyle::Secondary,
-            interactive,
-        );
+            button(p, ui, Rect::new(x, y, half, 30.0), &memory_label, ButtonStyle::Secondary, true) && interactive;
+        let note_rect = Rect::new(x + content_w - half, y, half, 30.0);
+        let open_note = button(p, ui, note_rect, note_label, ButtonStyle::Secondary, true) && interactive;
         y += 30.0 + 24.0;
 
         // Who the user plays; clicking edits them.
@@ -444,6 +438,10 @@ impl Chat {
             if !here && members.is_empty() {
                 continue;
             }
+            if here && !cast.is_empty() {
+                let hint = p.layout("Click to move in or out", theme::TINY, None);
+                p.text(&hint, x + content_w - hint.width(), y, t.text_faint);
+            }
             y = caption(p, &format!("{title} · {}", members.len()), x, y);
             if members.is_empty() {
                 let text = if cast.is_empty() {
@@ -467,21 +465,15 @@ impl Chat {
                 let hovered = interactive && ui.hovered(row);
                 let hover = ui.anim(id(("cast", &member.id)), f32::from(u8::from(hovered || menu_open)));
                 p.rect(row, fade(t.hover, hover), theme::RADIUS);
-                // On hover: a button moving them, and their menu.
+                // On hover: their menu.
                 let dots = Rect::new(row.right() - 34.0, row.y + (MEMBER_H - 26.0) * 0.5, 26.0, 26.0);
-                let move_label = if here { "Away" } else { "Bring in" };
-                let move_w = p.layout(move_label, theme::LABEL, None).width() + 18.0;
-                let move_rect = Rect::new(dots.x - 4.0 - move_w, dots.y, move_w, 26.0);
                 let controls = hovered || menu_open;
-                let text_right = if controls { move_rect.x - 6.0 } else { row.right() - 8.0 };
+                let text_right = if controls { dots.x - 6.0 } else { row.right() - 8.0 };
                 let summary =
                     member.description.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("No description yet");
                 let path = if member.portrait.is_empty() { None } else { self.library.portrait_path(&member.portrait) };
                 person(p, row, (&member.name, path.as_deref(), summary), (here, text_right));
                 if controls {
-                    if button(p, ui, move_rect, move_label, ButtonStyle::Ghost, true) {
-                        clicked = Some((index, RowClick::Move));
-                    }
                     let on_dots = ui.hovered(dots);
                     p.rect(dots, fade(t.active, if on_dots || menu_open { 1.0 } else { 0.0 }), theme::RADIUS_SM);
                     for i in 0..3 {
@@ -497,9 +489,8 @@ impl Chat {
                 }
                 if hovered {
                     ui.cursor = CursorIcon::Pointer;
-                    let on_control = move_rect.contains(ui.mouse) || dots.contains(ui.mouse);
-                    if !on_control && ui.clicked(row) {
-                        clicked = Some((index, RowClick::Edit));
+                    if !dots.contains(ui.mouse) && ui.clicked(row) {
+                        clicked = Some((index, RowClick::Move));
                     }
                 }
             }
@@ -511,7 +502,7 @@ impl Chat {
         // The footer: adding characters.
         p.rect(Rect::new(footer.x, footer.y, footer.w, 1.0), t.border, 0.0);
         let add = Rect::new(x, footer.y + (FOOTER_H - 36.0) * 0.5, content_w, 36.0);
-        if button(p, ui, add, "+  Add characters", ButtonStyle::Primary, true) {
+        if button(p, ui, add, "+  Add characters", ButtonStyle::Secondary, true) {
             self.menu = if self.menu == Some(Menu::CastLibrary) { None } else { Some(Menu::CastLibrary) };
             self.menu_scroll = 0.0;
         }
@@ -526,7 +517,6 @@ impl Chat {
             self.edit_player();
         } else if let Some((index, click)) = clicked {
             match click {
-                RowClick::Edit => self.edit_member(index),
                 RowClick::Move => self.change_cast(actions, |cast| cast[index].present = !cast[index].present),
                 RowClick::Menu(dots) => {
                     self.menu = if self.menu == Some(Menu::Member(index)) { None } else { Some(Menu::Member(index)) };
@@ -769,20 +759,25 @@ mod tests {
             ..CastMember::default()
         };
         chat.current().cast.push(rue);
-        assert_eq!(chat.member_menu(0)[0].label, "Store in Characters");
+        let labels = |chat: &mut Chat| chat.member_menu(0).into_iter().map(|i| i.label).collect::<Vec<_>>();
+        assert_eq!(labels(&mut chat), ["Edit…", "Store in Characters", "Delete"]);
         let mut actions = Vec::new();
-        chat.member_menu_picked(0, 0, &mut actions);
+        chat.member_menu_picked(0, 1, &mut actions);
         assert!(
             matches!(&actions[..], [Action::SaveCharacter(c)] if c.id == "r" && c.description == "Small." && c.portrait == "rue.png")
         );
-        assert_eq!(chat.member_menu(0)[0].label, "Update in Characters", "now cast from the library");
+        assert_eq!(labels(&mut chat)[1], "Update in Characters", "now cast from the library");
 
         // Storing again updates that character; the story itself is untouched.
         chat.current().cast[0].description = "Quick.".into();
-        chat.member_menu_picked(0, 0, &mut actions);
+        chat.member_menu_picked(0, 1, &mut actions);
         let records = chat.library.list(Kind::Character);
         assert!(records.len() == 1 && records[0].description == "Quick.");
         assert!(actions.iter().all(|a| matches!(a, Action::SaveCharacter(_))));
+
+        // Edit opens the member's dialog.
+        chat.member_menu_picked(0, 0, &mut actions);
+        assert!(chat.character_form().is_some_and(|f| f.subject == super::super::dialog::Subject::Member("r".into())));
     }
 
     #[test]

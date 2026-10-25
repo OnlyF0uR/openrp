@@ -659,12 +659,7 @@ impl Chat {
                 let block = label.height() + 1.0 + note.height();
                 let line_y = card.y + ((PERSONA_H - block) * 0.5).round();
                 p.text(&label, text_x, line_y, t.text);
-                p.text(
-                    &note,
-                    text_x,
-                    line_y + label.height() + 1.0,
-                    if record.comment.is_empty() { t.text_faint } else { t.text_muted },
-                );
+                p.text(&note, text_x, line_y + label.height() + 1.0, t.text_muted);
                 if hovered {
                     ui.cursor = CursorIcon::Pointer;
                     if ui.clicked(card) {
