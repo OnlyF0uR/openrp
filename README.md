@@ -71,7 +71,10 @@ cargo clippy --workspace --all-targets
   Bubbles appear as they are written; a scene change, arrival or departure shows as a small
   note between them. Newcomers come in only when your message
   refers to someone not cast yet, or when nobody is in the scene (then the one character the
-  moment needs); they are introduced in the same `speak` call, each with a description. No
+  moment needs); they are introduced in the same `speak` call, each with a description. Every
+  character is one person with a personal name ("Bram Holloway", never "Bartender" or "Guard
+  2"): "the captain" or "your sister" means the cast member who fits, and a group or institution
+  ("the guards", "the government") speaks through one person who stands for it. No
   one is cast without a description: if a model lets someone act without introducing them,
   the app makes it describe them next (`tool_choice` forced to `create_character`, at most 3
   rounds). `create_character` also adds someone who matters but is not acting yet. When the

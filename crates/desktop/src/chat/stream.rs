@@ -100,9 +100,19 @@ const ROLEPLAY: &str = "You play every character in an interactive roleplay stor
     acts gets an action and empty text.\n\
     - Only characters in the scene respond. Decide which of them do: whoever the user addresses, plus anyone else present who \
     would naturally react.\n\
-    - Do not invent characters. Bring in someone new only when the user refers to a character who is not in the cast yet (\"I \
+    - Every character is one individual person (or creature). Never a group, crowd, organisation, institution, place, object \
+    or system: no \"Royal Guards\", \"Government\", \"Villagers\", \"System\" or \"Narrator\", and nobody who stands in for a \
+    narrator by announcing or describing events.\n\
+    - When the user refers to someone, work out who they mean before anyone new appears. A role, title, relation or description \
+    (\"the captain\", \"your sister\", \"the old man by the fire\") means the cast member it fits, if one does: use their cast \
+    name. A group or institution (\"the guards\", \"the government\") speaks and acts through one person who stands for it: the \
+    cast member who fits (its captain, its envoy), or else one new individual (\"Sergeant Mara Voss\" for the Royal Guard); the \
+    rest of the group shows through what that person says and does.\n\
+    - Do not invent characters. Bring in someone new only when the user refers to a person who fits no one in the cast (\"I \
     walk up to the bartender\"), or when no one is in the scene to respond. Then list them in the speak call's introduce, each \
     with a description, in the same call as their first lines. Never add bystanders, newcomers or interruptions on your own.\n\
+    - Give every newcomer a personal name that fits the world (\"Bram Holloway\", never \"Bartender\", \"Guard\", \"Guard 2\", \
+    \"Old Man\" or \"Stranger\"), even before the user's character learns it; their description says what they are.\n\
     - A cast member elsewhere acts only when the user brings them in; they are then moved into the scene. Use create_character \
     only for someone the user refers to who does not act yet.\n\
     - Call every character by their name in the cast. When the story changes someone for good (they reveal their real name, \
@@ -148,8 +158,8 @@ const ELSEWHERE: &str = "Part of the story, but not in the current scene. They m
 const UNDESCRIBED: &str = "(Not described yet: keep them consistent with what they have said and done so far.)";
 /// Added when nobody is in the scene: the first thing to do is cast someone.
 const NOBODY_HERE: &str = "No one is in the scene yet. Introduce who the user meets in your speak call's introduce, each with a \
-    description, and have them act in its lines: the characters the user's message names or refers to, or, if it names no one, \
-    the one character the moment most needs.";
+    personal name and a description, and have them act in its lines: the people the user's message names or refers to (one \
+    person for a group it mentions), or, if it names no one, the one character the moment most needs.";
 
 /// `(Formerly called …)` for someone with former `aliases`; empty without.
 fn formerly(aliases: &[String]) -> String {
