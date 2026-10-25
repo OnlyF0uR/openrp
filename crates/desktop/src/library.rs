@@ -40,6 +40,7 @@ use winit::keyboard::{Key, ModifiersState, NamedKey};
 use winit::window::CursorIcon;
 
 use crate::app::Action;
+use crate::color::{ColorPicker, Pick, color_button};
 use crate::editor::Editor;
 use crate::form::{FIELD_PAD, Fields};
 use crate::image::Lookup;
@@ -228,6 +229,8 @@ pub struct Record {
     pub tags: Vec<String>,
     /// The user's own note to tell it apart; never sent to the model.
     pub comment: String,
+    /// A character's or persona's colour as `#rrggbb`; empty for Auto.
+    pub color: String,
     /// Starred: listed first.
     pub favorite: bool,
     /// Background the model reads when the story mentions it.
@@ -268,6 +271,7 @@ impl From<Character> for Record {
             description,
             portrait,
             comment,
+            color,
             greetings,
             examples,
             tags,
@@ -286,6 +290,7 @@ impl From<Character> for Record {
             examples,
             tags,
             comment,
+            color,
             favorite,
             lore,
             created,
@@ -298,8 +303,21 @@ impl From<Character> for Record {
 impl From<Persona> for Record {
     fn from(p: Persona) -> Self {
         let locked = p.is_newer();
-        let Persona { id, name, description, portrait, comment, tags, favorite, created, updated, .. } = p;
-        Self { id, name, description, portrait, tags, comment, favorite, created, updated, locked, ..Self::default() }
+        let Persona { id, name, description, portrait, comment, color, tags, favorite, created, updated, .. } = p;
+        Self {
+            id,
+            name,
+            description,
+            portrait,
+            tags,
+            comment,
+            color,
+            favorite,
+            created,
+            updated,
+            locked,
+            ..Self::default()
+        }
     }
 }
 
@@ -315,6 +333,7 @@ impl Record {
             description: r.description,
             portrait: r.portrait,
             comment: r.comment,
+            color: r.color,
             greetings: r.greetings,
             examples: r.examples,
             tags: r.tags,
@@ -354,6 +373,7 @@ impl Record {
                     description: r.description,
                     portrait: r.portrait,
                     comment: r.comment,
+                    color: r.color,
                     tags: r.tags,
                     favorite: r.favorite,
                     created: r.created,
@@ -424,6 +444,10 @@ struct Form {
     favorite: bool,
     /// Portrait file name; empty for none.
     portrait: String,
+    /// A character's or persona's colour, as `#rrggbb`; empty for Auto.
+    color: String,
+    /// The colour picker, while it is open.
+    picker: Option<ColorPicker>,
     /// The image picker is open.
     picking: bool,
     /// Why the last portrait could not be used.
@@ -479,6 +503,8 @@ impl Form {
             open: Vec::new(),
             favorite: record.favorite,
             portrait: record.portrait,
+            color: record.color,
+            picker: None,
             picking: false,
             error: None,
             confirm_discard: false,
@@ -491,6 +517,15 @@ impl Form {
         };
         form.original = form.snapshot();
         form
+    }
+
+    /// Applies what the colour picker asked for.
+    fn picked(&mut self, pick: Pick) {
+        match pick {
+            Pick::Set(color) => self.color = color,
+            Pick::Close => self.picker = None,
+            Pick::Stay => {}
+        }
     }
 
     /// The field of greeting `k`.
@@ -523,6 +558,7 @@ impl Form {
             examples: if self.kind == Kind::Character { text(EXAMPLES) } else { String::new() },
             tags: parse_list(self.fields.text(TAGS)),
             comment: text(COMMENT),
+            color: if self.kind == Kind::World { String::new() } else { self.color.clone() },
             favorite: self.favorite,
             lore,
             created: self.created,
@@ -746,7 +782,12 @@ impl LibraryView {
 
     /// Saves who the user plays as a persona: updates the one of that name,
     /// or adds one. One saved by a newer version is left alone.
-    pub fn save_persona(&mut self, name: &str, description: &str, portrait: &str, actions: &mut Vec<Action>) {
+    pub fn save_persona(
+        &mut self,
+        name: &str,
+        (description, portrait, color): (&str, &str, &str),
+        actions: &mut Vec<Action>,
+    ) {
         let existing = self.persona_named(name).cloned();
         if existing.as_ref().is_some_and(|r| r.locked) || name.trim().is_empty() {
             return;
@@ -756,6 +797,7 @@ impl LibraryView {
             name: name.trim().chars().take(NAME_LIMIT).collect(),
             description: description.trim().to_owned(),
             portrait: portrait.to_owned(),
+            color: color.to_owned(),
             updated: unix_now(),
             ..base
         };
@@ -791,6 +833,11 @@ impl LibraryView {
     /// miss it.
     pub fn insert(&mut self, text: &str) {
         if let Some(form) = &mut self.form {
+            if let Some(picker) = &mut form.picker {
+                let pick = picker.insert(text);
+                form.picked(pick);
+                return;
+            }
             form.fields.insert(text);
         } else if let Some(filter) = &mut self.filter {
             filter.insert(text);
@@ -906,6 +953,13 @@ impl LibraryView {
             return self.filter.as_mut().is_some_and(|f| f.key(event, mods, cb));
         };
         let primary = if cfg!(target_os = "macos") { mods.super_key() } else { mods.control_key() };
+        let saving = primary && matches!(&event.logical_key, Key::Character(c) if c.eq_ignore_ascii_case("s"));
+        // An open colour picker takes the keys, but saving still saves.
+        if let Some(picker) = form.picker.as_mut().filter(|_| !saving) {
+            let pick = picker.key(event, mods, cb);
+            form.picked(pick);
+            return true;
+        }
         match &event.logical_key {
             // Unsaved changes go only on a second Esc.
             Key::Named(NamedKey::Escape) if form.dirty() && !form.confirm_discard => form.confirm_discard = true,
@@ -976,6 +1030,7 @@ impl LibraryView {
             name: member.name.clone(),
             description: member.description.clone(),
             portrait: member.portrait.clone(),
+            color: member.color.clone(),
             examples: member.examples.clone(),
             lore: member.lore.clone(),
             updated: unix_now(),
@@ -1328,7 +1383,7 @@ impl LibraryView {
             if hover > 0.0 {
                 p.shadow(Rect::new(card.x, card.y + 6.0, card.w, card.h), fade(t.shadow, hover), radius, 16.0);
             }
-            portrait(p, self.portrait_path(&record.portrait).as_deref(), &record.name, card, radius);
+            portrait(p, self.portrait_path(&record.portrait).as_deref(), (&record.name, &record.color), card, radius);
 
             // The band: name, then the comment that tells it apart, or its description.
             let band = Rect::new(card.x, card.bottom() - CARD_BAND, card.w, CARD_BAND);
@@ -1437,6 +1492,11 @@ impl LibraryView {
         let portrait_path = self.form.as_ref().and_then(|f| self.portrait_path(&f.portrait));
         let form = self.form.as_mut()?;
         let kind = form.kind;
+        // An open colour picker covers what is beneath it.
+        let covered = ui.blocker;
+        if let Some(rect) = form.picker.as_ref().and_then(|picker| picker.rect) {
+            ui.blocker = Some(rect);
+        }
 
         // Header: back, title, and the form's buttons on the right.
         let back = Rect::new(area.x + 8.0, area.y + (theme::HEADER_HEIGHT - 30.0) * 0.5, 112.0, 30.0);
@@ -1494,7 +1554,7 @@ impl LibraryView {
         let face = Rect::new(x, top, FORM_PORTRAIT, FORM_PORTRAIT);
         let hovered = interactive && ui.hovered(face) && !form.picking;
         let hover = ui.anim(id("form-portrait"), f32::from(u8::from(hovered)));
-        portrait(p, portrait_path.as_deref(), form.fields.text(NAME), face, theme::RADIUS);
+        portrait(p, portrait_path.as_deref(), (form.fields.text(NAME), &form.color), face, theme::RADIUS);
         p.bordered(face, [0.0; 4], theme::RADIUS, 1.0, mix(t.border, t.border_focus, hover));
         if hovered || form.portrait.is_empty() || form.picking {
             let strip = Rect::new(face.x + 1.0, face.bottom() - 27.0, face.w - 2.0, 26.0);
@@ -1533,6 +1593,17 @@ impl LibraryView {
         let (fx, fw) = (face.right() + 20.0, width - FORM_PORTRAIT - 20.0);
         let mut fy = top;
         p.label("Name", theme::LABEL, fx, fy, t.text);
+        // A character's or persona's colour, beside their name.
+        let mut color_anchor = None;
+        if kind != Kind::World {
+            let rect = Rect::new(fx + fw - 112.0, fy - 4.0, 112.0, 24.0);
+            let shown = theme::character_color(&t, form.fields.text(NAME), &form.color);
+            if color_button(p, ui, rect, shown, &form.color, form.picker.is_some()) && interactive {
+                let auto = theme::character_color(&t, form.fields.text(NAME), "");
+                form.picker = if form.picker.is_some() { None } else { Some(ColorPicker::new(&form.color, auto)) };
+            }
+            color_anchor = Some(rect);
+        }
         let name = form.fields.layout(p, NAME, fw);
         let name_h = name.line_height() + 2.0 * FIELD_PAD.1;
         form.fields.draw(
@@ -1692,6 +1763,12 @@ impl LibraryView {
         p.set_clip(clip);
         self.content_h = y - top + 64.0;
         changes.apply(form);
+        ui.blocker = covered;
+        if let (Some(picker), Some(anchor)) = (form.picker.as_mut(), color_anchor) {
+            let auto = theme::character_color(&t, form.fields.text(NAME), "");
+            let pick = picker.draw(p, ui, anchor, &form.color, auto);
+            form.picked(pick);
+        }
 
         let id = form.id.clone();
         if generate {
@@ -1957,15 +2034,15 @@ fn dots_button(p: &mut Painter, ui: &mut Ui, rect: Rect) -> bool {
 }
 
 /// Draws a portrait filling `rect`, or the first letter of `name` on a
-/// square tinted in their colour while there is none (or it is still
-/// loading).
-pub fn portrait(p: &mut Painter, path: Option<&str>, name: &str, rect: Rect, radius: f32) {
+/// square tinted in their colour (`color`, `#rrggbb`, or empty for one
+/// from their name) while there is none (or it is still loading).
+pub fn portrait(p: &mut Painter, path: Option<&str>, (name, color): (&str, &str), rect: Rect, radius: f32) {
     if let Some(path) = path
         && let Lookup::Ready(_) = p.image(path, rect, radius)
     {
         return;
     }
-    let ink = theme::character_color(&p.theme, name);
+    let ink = theme::character_color(&p.theme, name, color);
     p.rect(rect, mix(p.theme.surface, ink, 0.2), radius);
     let initial: String = name.trim().chars().next().map(char::to_uppercase).into_iter().flatten().collect();
     let style = Style { font: FontId::SERIF_BOLD, ..Style::semibold(rect.h * 0.46) };
@@ -2268,13 +2345,13 @@ mod tests {
 
         // Saving under a name kept already updates that persona, star and all.
         let mut actions = Vec::new();
-        view.save_persona(" gale ", "A hunter.", "gale.png", &mut actions);
+        view.save_persona(" gale ", ("A hunter.", "gale.png", ""), &mut actions);
         assert!(
             matches!(&actions[..], [Action::SavePersona(p)] if p.id == "p" && p.favorite && p.description == "A hunter." && p.name == "gale")
         );
-        view.save_persona("Rue", "Quick.", "", &mut actions);
+        view.save_persona("Rue", ("Quick.", "", ""), &mut actions);
         assert_eq!(view.list(Kind::Persona).len(), 3);
-        view.save_persona("  ", "Nobody.", "", &mut actions);
+        view.save_persona("  ", ("Nobody.", "", ""), &mut actions);
         assert_eq!(actions.len(), 2, "a persona needs a name");
         assert!(view.persona_named("RUE").is_some_and(|p| p.description == "Quick."));
     }

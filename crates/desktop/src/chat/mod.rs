@@ -529,6 +529,8 @@ struct MenuItem {
     summary: String,
     /// Starred in the library.
     favorite: bool,
+    /// A person's colour, as `#rrggbb`; empty for one from their name.
+    color: String,
 }
 
 impl MenuItem {
@@ -550,6 +552,7 @@ impl MenuItem {
             search: format!("{} {tags} {summary}", record.comment),
             summary: summary.to_owned(),
             favorite: record.favorite,
+            color: record.color.clone(),
             ..Self::new(&record.name, detail)
         }
     }
@@ -1255,7 +1258,7 @@ impl Chat {
         match self.page {
             Page::Chat => {
                 if let Some(form) = self.character_form() {
-                    form.fields.insert(text);
+                    form.insert(text);
                 } else if let Some(edit) = self.turn_edit() {
                     edit.fields.insert(text);
                 } else {

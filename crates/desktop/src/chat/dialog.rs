@@ -15,6 +15,7 @@ use winit::window::CursorIcon;
 
 use super::{Chat, Load, Menu, names, tools};
 use crate::app::Action;
+use crate::color::{ColorPicker, Pick, color_button};
 use crate::form::{FIELD_PAD, Fields};
 use crate::library::{Kind, Record, name_editor, portrait, text_editor};
 use crate::paint::{Painter, Rect, fade, hexa, mix};
@@ -111,6 +112,10 @@ pub(super) struct CharacterForm {
     scroll: f32,
     /// A cast member's portrait file name; empty for none.
     portrait: String,
+    /// Their colour, as `#rrggbb`; empty for one from their name.
+    color: String,
+    /// The colour picker, while it is open.
+    picker: Option<ColorPicker>,
     /// The image picker is open for the portrait.
     pub picking: bool,
     /// Why the last portrait could not be used.
@@ -118,6 +123,26 @@ pub(super) struct CharacterForm {
 }
 
 impl CharacterForm {
+    /// Applies what the colour picker asked for.
+    pub(super) fn picked(&mut self, pick: Pick) {
+        match pick {
+            Pick::Set(color) => self.color = color,
+            Pick::Close => self.picker = None,
+            Pick::Stay => {}
+        }
+    }
+
+    /// Text committed by an input method: into the colour picker while it
+    /// is open, else the focused field.
+    pub(super) fn insert(&mut self, text: &str) {
+        if let Some(picker) = &mut self.picker {
+            let pick = picker.insert(text);
+            self.picked(pick);
+        } else {
+            self.fields.insert(text);
+        }
+    }
+
     fn new(conversation: u64, fields: Fields, subject: Subject, editing: bool) -> Self {
         Self {
             conversation,
@@ -126,6 +151,8 @@ impl CharacterForm {
             editing,
             scroll: 0.0,
             portrait: String::new(),
+            color: String::new(),
+            picker: None,
             picking: false,
             pick_error: None,
         }
@@ -188,7 +215,7 @@ impl Chat {
                 let fields =
                     Fields::new([name_editor(&persona.name), text_editor(&persona.description)], [false, true]);
                 let mut form = CharacterForm::new(current, fields, Subject::Player, false);
-                form.portrait = persona.portrait;
+                (form.portrait, form.color) = (persona.portrait, persona.color);
                 self.character_form = Some(form);
             }
             _ => self.character_form = None,
@@ -208,10 +235,12 @@ impl Chat {
         let form = self.character_form().filter(|f| f.subject == Subject::Player)?;
         let (name, description) =
             (form.fields.text(NAME).trim().to_owned(), form.fields.text(DESCRIPTION).trim().to_owned());
-        let photo = form.portrait.clone();
+        let (photo, color) = (form.portrait.clone(), form.color.clone());
         self.persona_choices()
             .into_iter()
-            .find(|r| names::same(&r.name, &name) && r.description == description && r.portrait == photo)
+            .find(|r| {
+                names::same(&r.name, &name) && r.description == description && r.portrait == photo && r.color == color
+            })
             .map(|r| r.id.clone())
     }
 
@@ -221,7 +250,7 @@ impl Chat {
         if let Some(form) = self.character_form().filter(|f| f.subject == Subject::Player) {
             form.fields.replace(NAME, &persona.name);
             form.fields.replace(DESCRIPTION, &persona.description);
-            form.portrait = persona.portrait;
+            (form.portrait, form.color, form.picker) = (persona.portrait, persona.color, None);
         }
     }
 
@@ -241,7 +270,7 @@ impl Chat {
         let player = self.current().player.clone().unwrap_or_default();
         self.open_form(Subject::Player, &player.name, &player.description);
         if let Some(form) = &mut self.character_form {
-            form.portrait = player.portrait;
+            (form.portrait, form.color) = (player.portrait, player.color);
         }
     }
 
@@ -250,7 +279,7 @@ impl Chat {
         if let Some(member) = self.current().cast.get(index).cloned() {
             self.open_form(Subject::Member(member.id), &member.name, &member.description);
             if let Some(form) = &mut self.character_form {
-                form.portrait = member.portrait;
+                (form.portrait, form.color) = (member.portrait, member.color);
             }
         }
     }
@@ -320,7 +349,7 @@ impl Chat {
         }
         let name = form.fields.text(NAME).trim().to_owned();
         let description = form.fields.text(DESCRIPTION).trim().to_owned();
-        let portrait = form.portrait.clone();
+        let (portrait, color) = (form.portrait.clone(), form.color.clone());
         if let Subject::Generate { request, .. } = subject {
             if request.is_none() {
                 self.generate(name, actions);
@@ -340,14 +369,14 @@ impl Chat {
             Subject::Player => match &mut conversation.player {
                 Some(player) => {
                     rename(&mut player.name, &mut player.aliases, &name);
-                    (player.description, player.portrait) = (description, portrait);
+                    (player.description, player.portrait, player.color) = (description, portrait, color);
                 }
-                None => conversation.player = Some(Player { name, description, portrait, ..Player::default() }),
+                None => conversation.player = Some(Player { name, description, portrait, color, ..Player::default() }),
             },
             Subject::Member(id) => {
                 if let Some(member) = conversation.cast.iter_mut().find(|m| m.id == id) {
                     rename(&mut member.name, &mut member.aliases, &name);
-                    (member.description, member.portrait) = (description, portrait);
+                    (member.description, member.portrait, member.color) = (description, portrait, color);
                 }
             }
             Subject::NewMember => {
@@ -356,6 +385,7 @@ impl Chat {
                     name,
                     description,
                     portrait,
+                    color,
                     present: true,
                     ..CastMember::default()
                 });
@@ -462,6 +492,18 @@ impl Chat {
         let Some(form) = self.character_form() else {
             return false;
         };
+        let submits = primary
+            && match &event.logical_key {
+                Key::Named(NamedKey::Enter) => true,
+                Key::Character(c) => c.eq_ignore_ascii_case("s"),
+                _ => false,
+            };
+        // An open colour picker takes the keys, but saving still saves.
+        if let Some(picker) = form.picker.as_mut().filter(|_| !submits) {
+            let pick = picker.key(event, mods, cb);
+            form.picked(pick);
+            return true;
+        }
         let single = form.subject.single();
         match &event.logical_key {
             Key::Named(NamedKey::Escape) if form.editing => self.character_form = None,
@@ -494,6 +536,11 @@ impl Chat {
             self.draw_memories(p, ui, area, actions);
             return;
         }
+        // An open colour picker covers what is beneath it.
+        let covered = ui.blocker;
+        if let Some(rect) = form.picker.as_ref().and_then(|picker| picker.rect) {
+            ui.blocker = Some(rect);
+        }
         let (subject, editing) = (form.subject.clone(), form.editing);
         let name = form.fields.text(NAME).trim().to_owned();
         let description = form.fields.text(DESCRIPTION).trim().to_owned();
@@ -501,7 +548,7 @@ impl Chat {
             Subject::Generate { request, error } => Some((request.is_some(), error.clone())),
             _ => None,
         };
-        let (photo, pick_error) = (form.portrait.clone(), form.pick_error.clone());
+        let (photo, pick_error, color) = (form.portrait.clone(), form.pick_error.clone(), form.color.clone());
         let single = subject.single();
         let taken = !single && !name.is_empty() && self.name_taken(&subject, &name);
         // Cast members and the user's character get a portrait beside their name.
@@ -518,7 +565,7 @@ impl Chat {
                 .map(|r| (r.clone(), self.library.portrait_path(&r.portrait)))
                 .collect();
             let kept = (!name.is_empty()).then(|| match self.library.persona_named(&name) {
-                Some(r) if r.description == description && r.portrait == photo => Kept::Yes,
+                Some(r) if r.description == description && r.portrait == photo && r.color == color => Kept::Yes,
                 Some(_) => Kept::Changed,
                 None => Kept::No,
             });
@@ -626,11 +673,13 @@ impl Chat {
             for (index, (record, path)) in personas.iter().enumerate() {
                 let (column, row) = ((index % 2) as f32, (index / 2) as f32);
                 let card = Rect::new(x + column * (card_w + 8.0), top + row * (PERSONA_H + 8.0), card_w, PERSONA_H);
-                let chosen =
-                    names::same(&record.name, &name) && record.description == description && record.portrait == photo;
+                let chosen = names::same(&record.name, &name)
+                    && record.description == description
+                    && record.portrait == photo
+                    && record.color == color;
                 let hovered = ui.hovered(card);
                 let hover = ui.anim(id(("persona", &record.id)), f32::from(u8::from(hovered)));
-                let ink = theme::character_color(&t, &record.name);
+                let ink = theme::character_color(&t, &record.name, &record.color);
                 if chosen {
                     p.bordered(card, mix(t.surface, t.accent, 0.08), theme::RADIUS, 1.0, fade(t.accent, 0.7));
                 } else {
@@ -643,7 +692,7 @@ impl Chat {
                     );
                 }
                 let face = Rect::new(card.x + 10.0, card.y + (PERSONA_H - 36.0) * 0.5, 36.0, 36.0);
-                portrait(p, path.as_deref(), &record.name, face, 18.0);
+                portrait(p, path.as_deref(), (&record.name, &record.color), face, 18.0);
                 p.bordered(Rect::new(face.x - 2.0, face.y - 2.0, 40.0, 40.0), [0.0; 4], 20.0, 1.5, fade(ink, 0.7));
                 let text_x = face.right() + 12.0;
                 let width = card.right() - 10.0 - text_x;
@@ -682,8 +731,19 @@ impl Chat {
         if let Some(path) = &photo_path {
             draw_photo(p, ui, Rect::new(x, y, PHOTO, PHOTO), path.as_deref(), &name, form, actions);
         }
+        let mut color_anchor = None;
         if let Some(layout) = name_layout {
             p.label(labels[0], theme::LABEL, x + name_x, y, t.text);
+            // Their colour, beside their name.
+            if photo_path.is_some() {
+                let rect = Rect::new(x + inner - 112.0, y - 4.0, 112.0, 24.0);
+                let shown = theme::character_color(&t, &name, &form.color);
+                if color_button(p, ui, rect, shown, &form.color, form.picker.is_some()) {
+                    let auto = theme::character_color(&t, &name, "");
+                    form.picker = if form.picker.is_some() { None } else { Some(ColorPicker::new(&form.color, auto)) };
+                }
+                color_anchor = Some(rect);
+            }
             y += 22.0;
             form.fields.draw(NAME, p, ui, Rect::new(x + name_x, y, inner - name_x, name_h), layout, hints[0], true);
             y += name_h + 20.0;
@@ -721,7 +781,7 @@ impl Chat {
             self.open_library_menu(Menu::Personas, anchor);
         }
         if keep {
-            self.library.save_persona(&name, &description, &photo, actions);
+            self.library.save_persona(&name, (&description, &photo, &color), actions);
         }
         if let Some(error) = &error {
             p.text(error, x, y + 8.0, t.danger);
@@ -749,6 +809,15 @@ impl Chat {
             self.submit_form(actions);
         } else if cancelled {
             self.character_form = None;
+        }
+        // The colour picker, over everything else.
+        ui.blocker = covered;
+        if let (Some(form), Some(anchor)) = (self.character_form(), color_anchor)
+            && let Some(picker) = &mut form.picker
+        {
+            let auto = theme::character_color(&t, &name, "");
+            let pick = picker.draw(p, ui, anchor, &form.color, auto);
+            form.picked(pick);
         }
     }
 
@@ -863,7 +932,7 @@ fn draw_photo(
 ) {
     let t = p.theme;
     let hovered = ui.hovered(rect) && !form.picking;
-    portrait(p, path, name, rect, theme::RADIUS_SM);
+    portrait(p, path, (name, &form.color), rect, theme::RADIUS_SM);
     p.bordered(rect, [0.0; 4], theme::RADIUS_SM, 1.0, if hovered { t.border_focus } else { t.border });
     if hovered || form.portrait.is_empty() || form.picking {
         let strip = Rect::new(rect.x + 1.0, rect.bottom() - 19.0, rect.w - 2.0, 18.0);
@@ -982,9 +1051,55 @@ mod tests {
 
         // What is typed is saved as a persona, or updates the one of its name.
         let mut actions = Vec::new();
-        chat.library.save_persona("Rue", "Quick.", "", &mut actions);
-        assert!(matches!(&actions[..], [Action::SavePersona(p)] if p.name == "Rue"));
+        chat.library.save_persona("Rue", ("Quick.", "", "#3e63dd"), &mut actions);
+        assert!(matches!(&actions[..], [Action::SavePersona(p)] if p.name == "Rue" && p.color == "#3e63dd"));
         assert_eq!(chat.library.list(Kind::Persona).len(), 9);
+    }
+
+    #[test]
+    fn colours_follow_who_they_belong_to() {
+        let mut chat = Chat::new(None, Reasoning::Auto, Vec::new());
+        let gale = openrp_core::Persona {
+            id: "g".into(),
+            name: "Gale".into(),
+            color: "#46a758".into(),
+            favorite: true,
+            ..Default::default()
+        };
+        chat.library_loaded(Vec::new(), Vec::new(), vec![gale], openrp_core::Portraits::at("p".into()));
+
+        // A persona's colour comes with them into a story.
+        chat.play("w".into());
+        chat.sync_character_form();
+        assert_eq!(chat.character_form().unwrap().color, "#46a758");
+        assert_eq!(chat.player_choice().as_deref(), Some("g"), "still exactly the persona");
+        chat.character_form().unwrap().picked(Pick::Set("#e5484d".into()));
+        assert_eq!(chat.player_choice(), None, "a new colour: no longer the persona as saved");
+        let mut actions = Vec::new();
+        chat.submit_form(&mut actions);
+        assert_eq!(chat.current().player.as_ref().map(|p| p.color.as_str()), Some("#e5484d"));
+
+        // A member's colour is edited in their dialog, and Auto clears it.
+        chat.create_member();
+        chat.character_form().unwrap().fields.insert("Rue");
+        chat.character_form().unwrap().picked(Pick::Set("#ffc53d".into()));
+        chat.submit_form(&mut actions);
+        assert_eq!(chat.current().cast[0].color, "#ffc53d");
+        chat.edit_member(0);
+        let form = chat.character_form().unwrap();
+        assert_eq!(form.color, "#ffc53d", "shown when edited again");
+        form.picker = Some(ColorPicker::new(&form.color, [0.0; 4]));
+        form.picked(Pick::Set(String::new()));
+        form.picked(Pick::Close);
+        assert!(form.picker.is_none());
+        chat.submit_form(&mut actions);
+        assert!(chat.current().cast[0].color.is_empty(), "back to Auto");
+
+        // Storing a member keeps their colour in the library.
+        chat.current().cast[0].color = "#8e4ec6".into();
+        let member = chat.current().cast[0].clone();
+        chat.library.store_character(&member, &mut actions);
+        assert_eq!(chat.library.get(Kind::Character, &member.id).map(|r| r.character().color), Some("#8e4ec6".into()));
     }
 
     #[test]

@@ -260,12 +260,12 @@ impl Chat {
         if conversation.world.is_none() || conversation.load != Load::Loaded {
             return None;
         }
-        let present: Vec<(String, String)> = conversation
+        let present: Vec<(String, String, String)> = conversation
             .cast
             .iter()
             .filter(|m| m.present)
             .take(STACK)
-            .map(|m| (m.name.clone(), m.portrait.clone()))
+            .map(|m| (m.name.clone(), m.portrait.clone(), m.color.clone()))
             .collect();
         let label = match conversation.cast.len() {
             0 => "Cast".to_owned(),
@@ -281,12 +281,12 @@ impl Chat {
         let fill = if open { mix(t.active, t.hover, hover) } else { fade(t.hover, hover) };
         p.rect(rect, fill, theme::RADIUS);
         let mut x = rect.x + 10.0;
-        for (name, image) in &present {
+        for (name, image, color) in &present {
             let disc = Rect::new(x, rect.y + (rect.h - face) * 0.5, face, face);
             // A ring of the header's colour keeps overlapping faces apart.
             p.rect(Rect::new(disc.x - 2.0, disc.y - 2.0, face + 4.0, face + 4.0), t.bg, face * 0.5 + 2.0);
             let path = if image.is_empty() { None } else { self.library.portrait_path(image) };
-            portrait(p, path.as_deref(), name, disc, face * 0.5);
+            portrait(p, path.as_deref(), (name, color), disc, face * 0.5);
             x += face - 8.0;
         }
         if !present.is_empty() {
@@ -350,7 +350,7 @@ impl Chat {
         // The world: its picture with its name over it, or its name alone.
         if let Some(path) = &banner {
             let rect = Rect::new(x, y, content_w, BANNER_H);
-            portrait(p, Some(path), &world_name, rect, theme::RADIUS + 2.0);
+            portrait(p, Some(path), (&world_name, ""), rect, theme::RADIUS + 2.0);
             let band = Rect::new(x, rect.bottom() - 38.0, content_w, 38.0);
             let saved = p.push_clip(band);
             p.rect(Rect::new(band.x, band.y - 8.0, band.w, band.h + 8.0), t.scrim, theme::RADIUS + 2.0);
@@ -421,7 +421,7 @@ impl Chat {
             p.rect(row, fade(t.hover, hover), theme::RADIUS);
             let note = persona_note.filter(|n| !n.is_empty()).unwrap_or_else(|| "Your character".to_owned());
             let path = if player.portrait.is_empty() { None } else { self.library.portrait_path(&player.portrait) };
-            person(p, row, (&player.name, path.as_deref(), &note), (true, row.right() - 8.0));
+            person(p, row, (&player.name, &player.color, path.as_deref(), &note), (true, row.right() - 8.0));
             if hovered {
                 ui.cursor = CursorIcon::Pointer;
                 edit_you = ui.clicked(row);
@@ -474,7 +474,7 @@ impl Chat {
                 let summary =
                     member.description.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("No description yet");
                 let path = if member.portrait.is_empty() { None } else { self.library.portrait_path(&member.portrait) };
-                person(p, row, (&member.name, path.as_deref(), summary), (here, text_right));
+                person(p, row, (&member.name, &member.color, path.as_deref(), summary), (here, text_right));
                 if controls {
                     let on_dots = ui.hovered(dots);
                     p.rect(dots, fade(t.active, if on_dots || menu_open { 1.0 } else { 0.0 }), theme::RADIUS_SM);
@@ -545,13 +545,18 @@ fn caption(p: &mut Painter, text: &str, x: f32, y: f32) -> f32 {
 }
 
 /// Draws a person's row inside `row`: their portrait ringed in their colour
-/// (faded while they are not `here`), their name and a line about them,
-/// which ends at `right`.
-fn person(p: &mut Painter, row: Rect, (name, path, about): (&str, Option<&str>, &str), (here, right): (bool, f32)) {
+/// (`color`, or one from their name; faded while they are not `here`),
+/// their name and a line about them, which ends at `right`.
+fn person(
+    p: &mut Painter,
+    row: Rect,
+    (name, color, path, about): (&str, &str, Option<&str>, &str),
+    (here, right): (bool, f32),
+) {
     let t = p.theme;
-    let ink = theme::character_color(&t, name);
+    let ink = theme::character_color(&t, name, color);
     let face = Rect::new(row.x + 8.0, row.y + (row.h - FACE) * 0.5, FACE, FACE);
-    portrait(p, path, name, face, FACE * 0.5);
+    portrait(p, path, (name, color), face, FACE * 0.5);
     let ring = Rect::new(face.x - 2.5, face.y - 2.5, FACE + 5.0, FACE + 5.0);
     if here {
         p.bordered(ring, [0.0; 4], ring.w * 0.5, 1.5, fade(ink, 0.8));
@@ -580,6 +585,7 @@ fn cast_member(character: &Record) -> CastMember {
         name: character.name.clone(),
         description: character.description.clone(),
         portrait: character.portrait.clone(),
+        color: character.color.clone(),
         examples: character.examples.clone(),
         lore: character.lore.clone(),
         present: true,

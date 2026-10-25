@@ -293,12 +293,16 @@ impl Scheme {
     }
 }
 
-/// The colour of the character called `name` in `palette`: the same hue
-/// wherever they appear (their name, bubble, portrait ring and initial),
-/// light on dark schemes and deep on light ones. Picked from the name, so
-/// it needs nothing stored, and the same name always gets the same colour.
+/// The colour of the character called `name` in `palette`, the same
+/// wherever they appear (their name, bubble, portrait ring and initial):
+/// the one the user `chose` (`#rrggbb`), made light or deep enough to read
+/// on this scheme, or, with none, one picked from the name, so the same
+/// name always gets the same colour.
 #[must_use]
-pub fn character_color(palette: &Palette, name: &str) -> Color {
+pub fn character_color(palette: &Palette, name: &str, chose: &str) -> Color {
+    if let Some(rgb) = parse_hex(chose) {
+        return legible(palette, rgb);
+    }
     // FNV-1a over the name as names are compared: case and marks ignored.
     let mut hash: u32 = 0x811C_9DC5;
     for c in name.chars().flat_map(char::to_lowercase).filter(|c| c.is_alphanumeric()) {
@@ -307,6 +311,70 @@ pub fn character_color(palette: &Palette, name: &str) -> Color {
     let hue = (hash % 360) as f32;
     let (lightness, chroma) = if palette.is_light() { (0.5, 0.13) } else { (0.78, 0.11) };
     oklch(lightness, chroma, hue)
+}
+
+/// Perceptual lightness a character's colour keeps on `palette`, so names
+/// in it stay readable: light on dark schemes, deep on light ones.
+fn readable(palette: &Palette) -> (f32, f32) {
+    if palette.is_light() { (0.3, 0.55) } else { (0.62, 0.95) }
+}
+
+/// `rgb` (sRGB, 0–1) with its lightness moved into what `palette` reads
+/// well, hue and chroma kept: a colour already readable is unchanged.
+#[must_use]
+pub fn legible(palette: &Palette, rgb: [f32; 3]) -> Color {
+    let (lightness, chroma, hue) = to_oklch(rgb);
+    let (low, high) = readable(palette);
+    if (low..=high).contains(&lightness) {
+        return [rgb[0], rgb[1], rgb[2], 1.0];
+    }
+    oklch(lightness.clamp(low, high), chroma, hue)
+}
+
+/// Whether [`legible`] changes `rgb` on `palette`.
+#[must_use]
+pub fn adjusted(palette: &Palette, rgb: [f32; 3]) -> bool {
+    !(readable(palette).0..=readable(palette).1).contains(&to_oklch(rgb).0)
+}
+
+/// An sRGB colour (0–1 each) from `#rrggbb`, `rrggbb` or `#rgb`.
+#[must_use]
+pub fn parse_hex(text: &str) -> Option<[f32; 3]> {
+    let digits = text.trim().trim_start_matches('#');
+    if !digits.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+    let channel = |at: usize, width: usize| {
+        let value = u8::from_str_radix(&digits[at * width..(at + 1) * width], 16).ok()?;
+        Some(f32::from(if width == 1 { value * 17 } else { value }) / 255.0)
+    };
+    let width = match digits.len() {
+        3 => 1,
+        6 => 2,
+        _ => return None,
+    };
+    Some([channel(0, width)?, channel(1, width)?, channel(2, width)?])
+}
+
+/// `rgb` (sRGB, 0–1 each) as `#rrggbb`.
+#[must_use]
+pub fn to_hex(rgb: [f32; 3]) -> String {
+    let byte = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
+    format!("#{:02x}{:02x}{:02x}", byte(rgb[0]), byte(rgb[1]), byte(rgb[2]))
+}
+
+/// OKLCH (lightness 0–1, chroma, hue in degrees) of an sRGB colour.
+fn to_oklch(rgb: [f32; 3]) -> (f32, f32, f32) {
+    let linear = rgb.map(|c| if c <= 0.040_45 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) });
+    let [r, g, b] = linear;
+    let long = (0.412_221_46 * r + 0.536_332_55 * g + 0.051_445_995 * b).cbrt();
+    let medium = (0.211_903_5 * r + 0.680_699_5 * g + 0.107_396_96 * b).cbrt();
+    let short = (0.088_302_46 * r + 0.281_718_85 * g + 0.629_978_7 * b).cbrt();
+    let lightness = 0.210_454_26 * long + 0.793_617_8 * medium - 0.004_072_047 * short;
+    let green_red = 1.977_998_5 * long - 2.428_592_2 * medium + 0.450_593_7 * short;
+    let blue_yellow = 0.025_904_037 * long + 0.782_771_77 * medium - 0.808_675_77 * short;
+    let hue = blue_yellow.atan2(green_red).to_degrees().rem_euclid(360.0);
+    (lightness, green_red.hypot(blue_yellow), hue)
 }
 
 /// An opaque sRGB colour from OKLCH (perceptual lightness 0–1, chroma,
@@ -374,8 +442,10 @@ mod tests {
     #[test]
     fn characters_get_their_own_legible_colour() {
         for palette in Scheme::ALL.map(Scheme::palette) {
-            let colors: Vec<Color> =
-                ["Katniss", "Peeta", "Haymitch", "Effie", "Rue"].iter().map(|n| character_color(palette, n)).collect();
+            let colors: Vec<Color> = ["Katniss", "Peeta", "Haymitch", "Effie", "Rue"]
+                .iter()
+                .map(|n| character_color(palette, n, ""))
+                .collect();
             for c in &colors {
                 assert!(c.iter().all(|v| (0.0..=1.0).contains(v)) && (c[3] - 1.0).abs() < f32::EPSILON, "{c:?}");
                 // Light enough on dark schemes, dark enough on light ones.
@@ -384,11 +454,35 @@ mod tests {
             }
             let apart = |a: &Color, b: &Color| a.iter().zip(b).any(|(x, y)| (x - y).abs() > 0.01);
             assert!(colors.windows(2).all(|w| apart(&w[0], &w[1])), "different names, different colours");
-            assert_eq!(character_color(palette, "Katniss"), character_color(palette, "katniss!"), "folded");
+            assert_eq!(character_color(palette, "Katniss", ""), character_color(palette, "katniss!", ""), "folded");
         }
         // Grey has no hue to lose; white stays white.
         let white = oklch(1.0, 0.0, 0.0);
         assert!(white[..3].iter().all(|v| (v - 1.0).abs() < 0.01), "{white:?}");
+    }
+
+    #[test]
+    fn chosen_colours_are_kept_where_readable() {
+        assert_eq!(parse_hex("#E8A55E").map(to_hex).as_deref(), Some("#e8a55e"));
+        assert_eq!(parse_hex(" f00 ").map(to_hex).as_deref(), Some("#ff0000"), "short and bare");
+        for bad in ["", "#", "#12345", "#gggggg", "#1234567", "#é12345"] {
+            assert!(parse_hex(bad).is_none(), "{bad:?}");
+        }
+        // OKLCH there and back.
+        for hex in ["#e8a55e", "#3e63dd", "#12a594", "#808080"] {
+            let rgb = parse_hex(hex).unwrap();
+            let (l, c, h) = to_oklch(rgb);
+            assert_eq!(to_hex(oklch(l, c, h)[..3].try_into().unwrap()), hex);
+        }
+        let amber = parse_hex("#e8a55e").unwrap();
+        assert_eq!(character_color(&DARK, "Mira", "#e8a55e")[..3], amber, "readable on dark: as chosen");
+        assert!(!adjusted(&DARK, amber) && adjusted(&LIGHT, amber));
+        // Black on a dark scheme, white on a light one: moved to where they read.
+        let luma = |c: Color| 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+        assert!(luma(character_color(&DARK, "Shade", "#000000")) > 0.25);
+        assert!(luma(character_color(&LIGHT, "Ghost", "#ffffff")) < 0.5);
+        // Nothing chosen (or nonsense): from the name.
+        assert_eq!(character_color(&DARK, "Mira", "nope"), character_color(&DARK, "Mira", ""));
     }
 
     #[test]

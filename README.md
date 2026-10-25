@@ -74,9 +74,14 @@ cargo clippy --workspace --all-targets
   *asterisks*), so several characters can answer and react to each other. Each character gets
   one bubble per reply, with their portrait and name, their actions muted and their words in
   full colour, in a serif made for reading (Literata); if a model gives someone two messages,
-  they are merged and the model is told. Every character has a colour of their own, from their
-  name: their name, portrait ring and bubble wear it, so a busy scene reads at a glance. Your
-  messages show as your character's bubble too. Bubbles fade in as they are written, and the
+  they are merged and the model is told. Every character has a colour of their own: their name,
+  portrait ring and bubble wear it, so a busy scene reads at a glance. It is picked from their
+  name until you choose one: **Colour** beside the name in a character's or persona's form (and
+  in a cast member's or your character's dialog) opens a picker with presets, a shade square,
+  a hue strip and a hex field; **Auto** goes back to the name's. A colour too dark or too light
+  to read on the scheme is shown lighter or deeper. Characters cast into a story, stored back
+  into the library or played as a persona keep their colour. Your messages show as your
+  character's bubble too. Bubbles fade in as they are written, and the
   portrait of whoever is speaking glows; a scene change shows as a centred scene card, and an
   arrival or departure as a small note between them. Newcomers come in only when your message
   refers to someone not cast yet, or when nobody is in the scene (then the one character the
@@ -203,6 +208,7 @@ cargo clippy --workspace --all-targets
 - `markdown.rs` → `doc.rs`: a streaming-friendly Markdown parser, and laid-out documents with
   selection, links and incremental rebuilds while a reply streams. `highlight.rs` colours code.
 - `paint.rs`, `ui.rs`, `editor.rs`: drawing API, widgets and input state, text editing.
+  `color.rs`: the colour picker.
 - `chat/`: the main screen (sidebar, composer, messages, menus); `chat/stream.rs` streams
   replies, retries failed requests and compacts long conversations.
 - `spotlight.rs`, `settings.rs`, `login.rs`: the other surfaces.

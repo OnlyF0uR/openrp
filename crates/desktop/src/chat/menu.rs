@@ -540,8 +540,9 @@ impl Chat {
                 p.bordered(row, fade(t.accent, 0.08), theme::RADIUS, 1.0, fade(t.accent, 0.6));
             }
             let face = Rect::new(row.x + 12.0, row.y + (row.h - PICK_FACE) * 0.5, PICK_FACE, PICK_FACE);
-            portrait(p, self.library.portrait_path(&item.image).as_deref(), &item.label, face, PICK_FACE * 0.5);
-            let ink = theme::character_color(&t, &item.label);
+            let path = self.library.portrait_path(&item.image);
+            portrait(p, path.as_deref(), (&item.label, &item.color), face, PICK_FACE * 0.5);
+            let ink = theme::character_color(&t, &item.label, &item.color);
             let ring = Rect::new(face.x - 3.0, face.y - 3.0, face.w + 6.0, face.h + 6.0);
             p.bordered(ring, [0.0; 4], ring.w * 0.5, 1.5, fade(ink, 0.35 + 0.5 * hover));
 
@@ -691,7 +692,8 @@ impl Chat {
             let face = Rect::new(row.x + 6.0, row.y + (ROW_H - FACE) * 0.5, FACE, FACE);
             let label_x = if faces { face.right() + 10.0 } else { row.x + 24.0 };
             if item.face {
-                portrait(p, self.library.portrait_path(&item.image).as_deref(), &item.label, face, FACE * 0.5);
+                let path = self.library.portrait_path(&item.image);
+                portrait(p, path.as_deref(), (&item.label, &item.color), face, FACE * 0.5);
             }
             if item.selected {
                 p.label_centered("✓", theme::SMALL, Rect::new(row.x + 4.0, row.y, 16.0, row.h), t.accent);

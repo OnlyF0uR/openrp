@@ -591,7 +591,7 @@ impl Chat {
                                 .cast
                                 .iter()
                                 .find(|m| note.strip_prefix(m.name.as_str()).is_some_and(|rest| rest.starts_with(' ')));
-                            let ink = about.map_or(t.border_strong, |m| theme::character_color(&t, &m.name));
+                            let ink = about.map_or(t.border_strong, |m| theme::character_color(&t, &m.name, &m.color));
                             p.rect(Rect::new(x + AVATAR * 0.5 - 3.0, y + mid - 3.0, 6.0, 6.0), ink, 3.0);
                             ((column, y), t.text_faint, Rect::new(column, y, width - AVATAR - AVATAR_GAP, doc.height))
                         }
@@ -883,15 +883,19 @@ fn speaker(
     width: f32,
     glow: f32,
 ) -> (f32, Color) {
-    let (shown, image) = match names::resolve(cast, player, name) {
-        Some(Who::Member(index)) => (cast[index].name.as_str(), cast[index].portrait.as_str()),
-        Some(Who::Player) => player.map_or((name, ""), |p| (p.name.as_str(), p.portrait.as_str())),
-        None => (name, ""),
+    let (shown, image, color) = match names::resolve(cast, player, name) {
+        Some(Who::Member(index)) => {
+            (cast[index].name.as_str(), cast[index].portrait.as_str(), cast[index].color.as_str())
+        }
+        Some(Who::Player) => {
+            player.map_or((name, "", ""), |p| (p.name.as_str(), p.portrait.as_str(), p.color.as_str()))
+        }
+        None => (name, "", ""),
     };
-    let ink = theme::character_color(&p.theme, shown);
+    let ink = theme::character_color(&p.theme, shown, color);
     let face = Rect::new(x, top, AVATAR, AVATAR);
     let path = if image.is_empty() { None } else { library.portrait_path(image) };
-    portrait(p, path.as_deref(), shown, face, AVATAR * 0.5);
+    portrait(p, path.as_deref(), (shown, color), face, AVATAR * 0.5);
     let ring = Rect::new(face.x - 3.0, face.y - 3.0, face.w + 6.0, face.h + 6.0);
     p.bordered(ring, [0.0; 4], ring.w * 0.5, 1.5 + glow, fade(ink, 0.45 + 0.55 * glow));
     let column = x + AVATAR + AVATAR_GAP;
@@ -1005,7 +1009,7 @@ fn draw_empty(p: &mut Painter, ui: &mut Ui, view: Rect, story: Option<(&str, Opt
         // The world's picture, large, sets the mood; without one, its initial.
         let side = if path.is_some() { ((view.w - 64.0).min(380.0), 212.0) } else { (88.0, 88.0) };
         let picture = Rect::new((cx - side.0 * 0.5).round(), top, side.0, side.1);
-        portrait(p, path, name, picture, theme::RADIUS + 4.0);
+        portrait(p, path, (name, ""), picture, theme::RADIUS + 4.0);
         p.bordered(picture, [0.0; 4], theme::RADIUS + 4.0, 1.0, fade(t.border_strong, 0.7));
         (
             name,
