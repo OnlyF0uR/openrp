@@ -53,6 +53,9 @@ pub const UPDATE_CHARACTER: &str = "update_character";
 pub const REMEMBER: &str = "remember";
 /// Longest a memory may be, in characters; longer ones are cut.
 const MEMORY_LIMIT: usize = 400;
+/// How every tool that makes a character asks for their name.
+const NAME: &str = "Their personal name, fitting the world, e.g. \"Bram Holloway\": one person's, never a role (\"Bartender\", \
+                    \"Guard 2\") or a group (\"Royal Guards\", \"Government\").";
 
 /// Every tool as (name, description, JSON Schema of its arguments).
 #[must_use]
@@ -63,8 +66,9 @@ pub fn tool_definitions() -> Vec<(&'static str, &'static str, Value)> {
             "Tell the story through the characters: everything they say and do this turn, in one call, with one message per \
              responding character. Only characters in the scene take part, never the user's character: whoever the user \
              addresses, and others present who would react. There is no narrator and no narration: what happens is shown only \
-             through the characters' words and actions. Bring in someone new only when the user refers to them or no one is in \
-             the scene; they must then be in introduce, with a description.",
+             through the characters' words and actions. Every character is one named individual: a group or institution speaks \
+             through one person who stands for it. Bring in someone new only when the user refers to a person who fits no one in \
+             the cast, or no one is in the scene; they must then be in introduce, with a description.",
             json!({
                 "type": "object",
                 "properties": {
@@ -74,11 +78,11 @@ pub fn tool_definitions() -> Vec<(&'static str, &'static str, Value)> {
                     },
                     "introduce": {
                         "type": "array",
-                        "description": "Every character in these lines who is not in the cast yet, described: only someone the user refers to, or the first character when no one is in the scene. Usually empty.",
+                        "description": "Every character in these lines who is not in the cast yet, described: only a person the user refers to who fits no one in the cast, or the first character when no one is in the scene. Each is one individual. Usually empty.",
                         "items": {
                             "type": "object",
                             "properties": {
-                                "name": { "type": "string", "description": "Their name, exactly as used in the lines." },
+                                "name": { "type": "string", "description": format!("{NAME} Exactly as used in the lines.") },
                                 "description": { "type": "string", "description": "Who they are: role, personality, appearance, how they speak." }
                             },
                             "required": ["name", "description"]
@@ -90,7 +94,7 @@ pub fn tool_definitions() -> Vec<(&'static str, &'static str, Value)> {
                         "items": {
                             "type": "object",
                             "properties": {
-                                "character": { "type": "string", "description": "Who responds: a name from the cast in the scene, or one introduced above." },
+                                "character": { "type": "string", "description": "Who responds: one person's name from the cast in the scene, or one introduced above." },
                                 "action": { "type": "string", "description": "What they do as they respond, e.g. \"lowers her bow, eyes on the treeline\". May be empty." },
                                 "text": { "type": "string", "description": "Exactly what they say, without quotation marks. A short action between their words goes in *asterisks*, e.g. \"Stay back. *She steps closer.* I mean it.\" Empty when they only act." }
                             },
@@ -109,12 +113,13 @@ pub fn tool_definitions() -> Vec<(&'static str, &'static str, Value)> {
         (
             CREATE_CHARACTER,
             "Add a character to this story's cast, with a description: someone the user refers to who is not acting this turn \
-             (for a newcomer who acts now, use speak's introduce), or to describe a cast member who has no description yet. Never \
-             for characters the user has not referred to, nor for the user's character.",
+             (for a newcomer who acts now, use speak's introduce), or to describe a cast member who has no description yet. Each \
+             character is one individual, never a group, institution or system. Never for characters the user has not referred \
+             to, nor for anyone the cast already has under another name or role, nor for the user's character.",
             json!({
                 "type": "object",
                 "properties": {
-                    "name": { "type": "string", "description": "Their name, as they will be addressed." },
+                    "name": { "type": "string", "description": NAME },
                     "description": { "type": "string", "description": "Who they are: role, personality, appearance, how they speak." },
                     "present": { "type": "boolean", "description": "Whether they are in the current scene. Defaults to true." }
                 },
@@ -194,6 +199,8 @@ pub fn split_ooc(text: &str) -> (&str, Option<&str>) {
 /// System instructions of the character generator, which can do one thing.
 const GENERATOR: &str = "You create characters for an interactive roleplay story. Your only job is to invent exactly one \
     character from the user's request and return them with one create_character call; write nothing else, and never continue \
+    the story. The character is one individual person (or creature) with a personal name that fits the world; a request for a \
+    group or institution gets one person from it. \
     the story. The description is for the AI that will play them: who they are, their role, personality, appearance, how they \
     speak and what they want, in one short paragraph. Fit the world below, if any. Never create the user's character or anyone \
     already in the cast.";
@@ -212,7 +219,7 @@ pub fn generator_tool() -> (&'static str, &'static str, Value) {
         json!({
             "type": "object",
             "properties": {
-                "name": { "type": "string", "description": "Their name, as they will be addressed." },
+                "name": { "type": "string", "description": NAME },
                 "description": { "type": "string", "description": "Who they are, in one short paragraph: role, personality, appearance, how they speak, what they want." }
             },
             "required": ["name", "description"]
