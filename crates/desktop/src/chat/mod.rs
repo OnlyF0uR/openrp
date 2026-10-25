@@ -37,7 +37,7 @@ use crate::app::Action;
 use crate::doc::Doc;
 use crate::editor::Editor;
 use crate::library::{Event as LibraryEvent, Kind, LibraryView, Record, Story};
-use crate::paint::{Painter, Rect};
+use crate::paint::{Painter, Rect, fade};
 use crate::settings::{Provider, SettingsView, Totals};
 use crate::spotlight::{Outcome, Pick, Spotlight};
 use crate::text::TextLayout;
@@ -200,9 +200,8 @@ enum Menu {
     Reasoning,
     /// Slash commands completing the composer text; open while any match.
     Commands,
-    /// Ways to add to the story's cast.
-    Cast,
-    /// Library characters to add to the cast.
+    /// Library characters to add to the cast, with ways to create or
+    /// generate one.
     CastLibrary,
     /// What to do with the cast member at this index.
     Member(usize),
@@ -526,6 +525,10 @@ struct MenuItem {
     image: String,
     /// More text a search finds it by (tags, an id).
     search: String,
+    /// What it is about (a record's description), under it in a picker.
+    summary: String,
+    /// Starred in the library.
+    favorite: bool,
 }
 
 impl MenuItem {
@@ -534,15 +537,19 @@ impl MenuItem {
         Self { label: label.to_owned(), detail: detail.to_owned(), ..Self::default() }
     }
 
-    /// A library record's row: its portrait and name, and the comment that
-    /// tells it apart (or its tags), searched with its tags too.
+    /// A library record's row: its portrait and name, the comment that
+    /// tells it apart (or its tags) and what it is about, searched with its
+    /// tags and description too.
     fn record(record: &Record) -> Self {
         let tags = record.tags.join(", ");
         let detail = if record.comment.is_empty() { tags.as_str() } else { record.comment.as_str() };
+        let summary = record.description.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or_default();
         Self {
             face: true,
             image: record.portrait.clone(),
-            search: format!("{} {tags}", record.comment),
+            search: format!("{} {tags} {summary}", record.comment),
+            summary: summary.to_owned(),
+            favorite: record.favorite,
             ..Self::new(&record.name, detail)
         }
     }
@@ -631,6 +638,12 @@ pub struct Chat {
     impersonation: Option<impersonate::Impersonation>,
     /// The worlds and characters pages.
     library: LibraryView,
+    /// The user showed (`true`) or hid the cast panel; `None` shows it
+    /// whenever there is room beside the story.
+    cast_open: Option<bool>,
+    /// How far the cast panel is scrolled, and how tall its content was.
+    cast_scroll: f32,
+    cast_content_h: f32,
 }
 
 impl Chat {
@@ -686,6 +699,9 @@ impl Chat {
             play_character: String::new(),
             impersonation: None,
             spotlight: None,
+            cast_open: None,
+            cast_scroll: 0.0,
+            cast_content_h: 0.0,
         };
         for summary in sessions {
             let id = chat.next_id();
@@ -1464,31 +1480,43 @@ impl Chat {
                 // beneath it reacts.
                 let editing = self.character_form.is_some() && !self.current().needs_player();
                 let covered = ui.blocker;
+                // The cast panel beside the story, or floating over it.
+                let panel = self.cast_panel(main);
+                let floating = panel.filter(|(_, docked)| !docked).map(|(rect, _)| rect);
                 if editing && !modal {
                     ui.blocker = Some(main);
+                } else if ui.blocker.is_none() {
+                    ui.blocker = floating;
                 }
-                self.draw_header(p, main);
-                let (strip_bottom, add_cast) = self.draw_cast(p, ui, main, actions);
-                let body = Rect::new(main.x, strip_bottom, main.w, main.bottom() - strip_bottom);
+                if self.draw_header(p, ui, main, panel.is_some()) {
+                    self.toggle_cast(main);
+                }
+                let stage = match panel {
+                    Some((rect, true)) => Rect::new(main.x, main.y, rect.x - main.x, main.h),
+                    _ => main,
+                };
+                let top = theme::HEADER_HEIGHT;
                 let toolbar = if self.current().needs_player() {
-                    self.draw_character_form(p, ui, body, actions);
+                    self.draw_character_form(p, ui, Rect::new(stage.x, top, stage.w, stage.h - top), actions);
                     [Rect::default(); 3]
                 } else {
                     let (composer_top, toolbar) = if self.current().playable() {
-                        self.draw_composer(p, ui, main, actions)
+                        self.draw_composer(p, ui, stage, actions)
                     } else {
-                        (main.bottom(), [Rect::default(); 3])
+                        (stage.bottom(), [Rect::default(); 3])
                     };
-                    let messages = Rect::new(main.x, strip_bottom, main.w, composer_top - strip_bottom - 12.0);
+                    let messages = Rect::new(stage.x, top, stage.w, composer_top - top - 12.0);
                     self.draw_messages(p, ui, messages, actions);
                     toolbar
                 };
+                ui.blocker = if editing && !modal { Some(main) } else { covered };
+                let member_menu = panel.map(|(rect, _)| self.draw_cast_panel(p, ui, rect, actions)).unwrap_or_default();
                 if editing {
                     ui.blocker = covered;
                     self.draw_character_form(p, ui, main, actions);
                 }
                 let [model_button, reasoning_button, card] = toolbar;
-                [model_button, reasoning_button, card, add_cast]
+                [model_button, reasoning_button, card, member_menu]
             }
         };
         if !modal {
@@ -1536,17 +1564,24 @@ impl Chat {
         self.menu_anchor = anchor;
     }
 
-    /// Title bar of the chat area: session title and cost.
-    fn draw_header(&mut self, p: &mut Painter, main: Rect) {
+    /// Title bar of the chat area: session title, cost and, in a story, the
+    /// Cast button (`cast_open` while the panel shows), over a wash of the
+    /// world's picture. Returns whether the Cast button was clicked.
+    fn draw_header(&mut self, p: &mut Painter, ui: &mut Ui, main: Rect, cast_open: bool) -> bool {
         let t = p.theme;
         let bar = Rect::new(main.x, 0.0, main.w, theme::HEADER_HEIGHT);
-        p.rect(Rect::new(bar.x, bar.bottom() - 1.0, bar.w, 1.0), t.border, 0.0);
         let conversation = self.current();
         let (tokens, cost) = (conversation.tokens(), conversation.cost());
         let (world, title) = (conversation.world.clone(), conversation.title.clone());
+        let world = world.map(|id| self.library.get(Kind::World, &id));
+        // The world's colours, softly, behind the title.
+        if let Some(path) = world.flatten().and_then(|w| self.library.portrait_path(&w.portrait)) {
+            p.backdrop(&path, bar, if t.is_light() { 0.35 } else { 0.5 });
+            p.rect(bar, fade(t.bg, 0.55), 0.0);
+        }
+        p.rect(Rect::new(bar.x, bar.bottom() - 1.0, bar.w, 1.0), t.border, 0.0);
         // The world first, then what this story is about.
-        let world =
-            world.map(|id| self.library.get(Kind::World, &id).map_or("A deleted world".to_owned(), |w| w.name.clone()));
+        let world = world.map(|w| w.map_or("A deleted world".to_owned(), |w| w.name.clone()));
         let title = match (world, title.is_empty()) {
             (Some(world), true) => world,
             (Some(world), false) => format!("{world}  ·  {title}"),
@@ -1554,7 +1589,14 @@ impl Chat {
             (None, false) => title,
         };
 
-        let mut right = bar.right() - 16.0;
+        let mut right = bar.right() - 12.0;
+        let mut toggled = false;
+        if let Some((button, clicked)) = self.draw_cast_button(p, ui, right, cast_open) {
+            right = button.x - 16.0;
+            toggled = clicked;
+        } else {
+            right -= 4.0;
+        }
         if tokens > 0 {
             // Providers rarely list prices: the cost shows once there is one.
             let spent = if cost > 0.0 {
@@ -1570,6 +1612,7 @@ impl Chat {
         let mut layout = p.layout(&title, theme::LABEL, None);
         layout.truncate(p.fonts, (right - bar.x - 16.0).max(40.0));
         p.text(&layout, bar.x + 16.0, bar.y + (bar.h - layout.height()) * 0.5, t.text);
+        toggled
     }
 
     /// Column holding messages and the composer inside `main`.

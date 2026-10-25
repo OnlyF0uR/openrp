@@ -50,10 +50,12 @@ use crate::ui::{ButtonStyle, Ui, button, chevron, id};
 
 /// Widest the page's column gets.
 const CONTENT_WIDTH: f32 = 680.0;
-/// Height of a record's card in the index.
-const CARD_H: f32 = 80.0;
-/// Side of a card's portrait.
-const CARD_PORTRAIT: f32 = 56.0;
+/// Widest the index's grid of cards gets.
+const GRID_WIDTH: f32 = 1080.0;
+/// Space between the index's cards.
+const GRID_GAP: f32 = 14.0;
+/// Height of the band holding a card's name and note.
+const CARD_BAND: f32 = 58.0;
 /// Side of the form's portrait.
 const FORM_PORTRAIT: f32 = 132.0;
 /// Height of a story's row on its world's page.
@@ -1088,14 +1090,14 @@ impl LibraryView {
     }
 
     /// Scrolls the body below the header and returns it with the content
-    /// column's x and width.
-    fn body(&mut self, ui: &mut Ui, area: Rect) -> (Rect, f32, f32) {
+    /// column's x and width, at most `max`.
+    fn body(&mut self, ui: &mut Ui, area: Rect, max: f32) -> (Rect, f32, f32) {
         let body = Rect::new(area.x, area.y + theme::HEADER_HEIGHT, area.w, area.h - theme::HEADER_HEIGHT);
         if ui.hovered(body) {
             self.scroll += ui.scroll;
         }
         self.scroll = self.scroll.clamp(0.0, (self.content_h - body.h).max(0.0));
-        let width = CONTENT_WIDTH.min(body.w - 64.0);
+        let width = max.min(body.w - 64.0);
         (body, body.x + ((body.w - width) * 0.5).round(), width)
     }
 
@@ -1168,7 +1170,7 @@ impl LibraryView {
             buttons_x = import_rect.x;
         }
         header(p, area, kind.plural(), area.x + 16.0, buttons_x - 12.0);
-        let (body, x, width) = self.body(ui, area);
+        let (body, x, width) = self.body(ui, area, GRID_WIDTH);
         // Reading the files takes milliseconds; a spinner would only flash.
         if !self.loaded {
             return None;
@@ -1304,80 +1306,80 @@ impl LibraryView {
             );
             y += 40.0;
         }
-        for &index in &rows {
+        // The cards: a grid of pictures, the name and what tells each apart
+        // over a band at their foot. People stand tall; worlds lie wide.
+        let (min_w, aspect) = if kind == Kind::World { (240.0, 0.62) } else { (164.0, 1.3) };
+        let columns = ((width + GRID_GAP) / (min_w + GRID_GAP)).floor().max(1.0);
+        let card_w = ((width - GRID_GAP * (columns - 1.0)) / columns).floor();
+        let card_h = (card_w * aspect).round();
+        let columns = columns as usize;
+        let radius = theme::RADIUS + 4.0;
+        for (k, &index) in rows.iter().enumerate() {
             let record = &self.list(kind)[index];
-            let card = Rect::new(x, y, width, CARD_H);
-            y += CARD_H + 8.0;
-            if card.bottom() < body.y || card.y > body.bottom() {
+            let (column, row) = ((k % columns) as f32, (k / columns) as f32);
+            let slot = Rect::new(x + column * (card_w + GRID_GAP), y + row * (card_h + GRID_GAP), card_w, card_h);
+            if slot.bottom() < body.y || slot.y > body.bottom() {
                 continue;
             }
-            let hovered = interactive && ui.hovered(card);
+            let hovered = interactive && ui.hovered(slot);
             let hover = ui.anim(id(("record", &record.id)), f32::from(u8::from(hovered)));
-            p.bordered(card, mix(t.surface, t.hover, hover), theme::RADIUS, 1.0, mix(t.border, t.border_strong, hover));
-            let face = Rect::new(card.x + 12.0, card.y + (CARD_H - CARD_PORTRAIT) * 0.5, CARD_PORTRAIT, CARD_PORTRAIT);
-            portrait(p, self.portrait_path(&record.portrait).as_deref(), &record.name, face, theme::RADIUS_SM);
-            let text_x = face.right() + 14.0;
-
-            // Edit on the right, for worlds: clicking the card plays instead.
-            let mut right = card.right() - 14.0;
-            let mut on_control = false;
-            if kind == Kind::World {
-                let edit_button = Rect::new(right - 72.0, card.y + (CARD_H - 30.0) * 0.5, 72.0, 30.0);
-                on_control = edit_button.contains(ui.mouse);
-                // Inert only where the mouse is over this button through the header
-                // (it is scrolled beneath): hovering the header or sidebar elsewhere must not dim it.
-                if button(p, ui, edit_button, "Edit", ButtonStyle::Primary, interactive || !on_control) {
-                    opened = Some(index);
-                }
-                right = edit_button.x - 6.0;
+            // Hovered, a card lifts off the page.
+            let card = Rect::new(slot.x, slot.y - (2.0 * hover).round(), slot.w, slot.h);
+            if hover > 0.0 {
+                p.shadow(Rect::new(card.x, card.y + 6.0, card.w, card.h), fade(t.shadow, hover), radius, 16.0);
             }
-            // The star: always on a favourite, on hover otherwise.
-            let star_rect = Rect::new(right - 30.0, card.y + (CARD_H - 30.0) * 0.5, 30.0, 30.0);
-            let on_star = hovered && star_rect.contains(ui.mouse);
-            on_control |= on_star;
-            if record.favorite || hovered {
-                if on_star {
-                    p.rect(star_rect, t.active, theme::RADIUS_SM);
-                    ui.cursor = CursorIcon::Pointer;
-                }
-                let color = if record.favorite {
-                    t.accent
-                } else if on_star {
-                    t.text
-                } else {
-                    t.text_faint
-                };
-                p.label_centered(if record.favorite { "★" } else { "☆" }, Style::regular(16.0), star_rect, color);
-                if on_star && ui.clicked(star_rect) {
-                    star = Some(record.id.clone());
-                }
-            }
-            right = star_rect.x - 8.0;
+            portrait(p, self.portrait_path(&record.portrait).as_deref(), &record.name, card, radius);
 
+            // The band: name, then the comment that tells it apart, or its description.
+            let band = Rect::new(card.x, card.bottom() - CARD_BAND, card.w, CARD_BAND);
+            let inner = p.push_clip(band);
+            p.rect(Rect::new(band.x, band.y - radius, band.w, band.h + radius), t.scrim, radius);
+            p.set_clip(inner);
+            let text_w = card.w - 24.0;
             let mut name = p.layout(&record.name, theme::LABEL, None);
-            name.truncate(p.fonts, right - text_x);
-            p.text(&name, text_x, card.y + 17.0, t.text);
-            // Its first tags, beside the name while they fit.
-            let mut pill_x = text_x + name.width() + 10.0;
-            for tag in record.tags.iter().take(3) {
-                let text = p.layout(tag, theme::TINY, None);
-                let pill = Rect::new(pill_x, card.y + 16.0, text.width() + 14.0, 19.0);
-                if pill.right() > right {
-                    break;
-                }
-                p.bordered(pill, t.bg, 9.5, 1.0, t.border);
-                p.text(&text, pill.x + 7.0, pill.y + (pill.h - text.height()) * 0.5, t.text_muted);
-                pill_x = pill.right() + 4.0;
-            }
-            // The user's comment tells it apart best; else its description.
+            name.truncate(p.fonts, text_w);
+            p.text(&name, band.x + 12.0, band.y + 11.0, t.on_scrim);
             let summary = if record.comment.is_empty() {
-                record.description.lines().find(|l| !l.trim().is_empty()).unwrap_or("No description yet")
+                record.description.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("No description yet")
             } else {
                 record.comment.as_str()
             };
             let mut summary = p.layout(summary, theme::SMALL, None);
-            summary.truncate(p.fonts, right - text_x);
-            p.text(&summary, text_x, card.y + 43.0, t.text_muted);
+            summary.truncate(p.fonts, text_w);
+            p.text(&summary, band.x + 12.0, band.y + 13.0 + name.height(), fade(t.on_scrim, 0.72));
+            let border = if hovered { mix(t.border_strong, t.accent, 0.5 * hover) } else { t.border };
+            p.bordered(card, [0.0; 4], radius, 1.0, border);
+
+            // Its first tag, and the star: always on a favourite, on hover otherwise.
+            if let Some(tag) = record.tags.first() {
+                let mut text = p.layout(tag, theme::TINY, None);
+                text.truncate(p.fonts, card.w * 0.5);
+                let pill = Rect::new(card.x + 8.0, card.y + 8.0, text.width() + 14.0, 20.0);
+                p.rect(pill, t.scrim, 10.0);
+                p.text(&text, pill.x + 7.0, pill.y + (pill.h - text.height()) * 0.5, t.on_scrim);
+            }
+            let star_rect = Rect::new(card.right() - 36.0, card.y + 6.0, 30.0, 30.0);
+            let on_star = hovered && star_rect.contains(ui.mouse);
+            let mut on_control = on_star;
+            if record.favorite || hovered {
+                p.rect(star_rect, if on_star { t.scrim } else { fade(t.scrim, 0.7) }, 15.0);
+                let color = if record.favorite { t.accent } else { fade(t.on_scrim, if on_star { 1.0 } else { 0.75 }) };
+                p.label_centered(if record.favorite { "★" } else { "☆" }, Style::regular(16.0), star_rect, color);
+                if on_star {
+                    ui.cursor = CursorIcon::Pointer;
+                    if ui.clicked(star_rect) {
+                        star = Some(record.id.clone());
+                    }
+                }
+            }
+            // Worlds play when clicked; their Edit shows on hover.
+            if kind == Kind::World && hovered {
+                let edit_button = Rect::new(star_rect.x - 64.0, card.y + 8.0, 58.0, 26.0);
+                on_control |= edit_button.contains(ui.mouse);
+                if button(p, ui, edit_button, "Edit", ButtonStyle::Secondary, true) {
+                    opened = Some(index);
+                }
+            }
             if hovered && !on_control {
                 ui.cursor = CursorIcon::Pointer;
                 if ui.clicked(card) {
@@ -1389,6 +1391,9 @@ impl LibraryView {
                 }
             }
         }
+        let grid_rows = rows.len().div_ceil(columns) as f32;
+        y += grid_rows * (card_h + GRID_GAP);
+
         p.set_clip(clip);
         self.content_h = y - top + 24.0;
 
@@ -1427,7 +1432,7 @@ impl LibraryView {
         actions: &mut Vec<Action>,
     ) -> Option<Event> {
         let t = p.theme;
-        let (body, x, width) = self.body(ui, area);
+        let (body, x, width) = self.body(ui, area, CONTENT_WIDTH);
         let scroll = self.scroll;
         let portrait_path = self.form.as_ref().and_then(|f| self.portrait_path(&f.portrait));
         let form = self.form.as_mut()?;
@@ -1952,17 +1957,19 @@ fn dots_button(p: &mut Painter, ui: &mut Ui, rect: Rect) -> bool {
 }
 
 /// Draws a portrait filling `rect`, or the first letter of `name` on a
-/// tinted square while there is none (or it is still loading).
+/// square tinted in their colour while there is none (or it is still
+/// loading).
 pub fn portrait(p: &mut Painter, path: Option<&str>, name: &str, rect: Rect, radius: f32) {
     if let Some(path) = path
         && let Lookup::Ready(_) = p.image(path, rect, radius)
     {
         return;
     }
-    let t = p.theme;
-    p.rect(rect, fade(t.accent, 0.16), radius);
+    let ink = theme::character_color(&p.theme, name);
+    p.rect(rect, mix(p.theme.surface, ink, 0.2), radius);
     let initial: String = name.trim().chars().next().map(char::to_uppercase).into_iter().flatten().collect();
-    p.label_centered(if initial.is_empty() { "?" } else { &initial }, Style::semibold(rect.h * 0.42), rect, t.accent);
+    let style = Style { font: crate::text::FontId::SERIF_BOLD, ..Style::semibold(rect.h * 0.46) };
+    p.label_centered(if initial.is_empty() { "?" } else { &initial }, style, rect, ink);
 }
 
 /// The page's title bar over `area`, its title between `title_x` and

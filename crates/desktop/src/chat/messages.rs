@@ -6,22 +6,22 @@ use winit::window::CursorIcon;
 use super::stream::MAX_RETRIES;
 use openrp_core::{CastMember, Player, Role};
 
-use super::names;
+use super::names::{self, Who};
 use super::tools::Part;
 use super::{Chat, Entry, Load, PRIMARY_KEY, Page, ReasoningView, SelPos, model_name, turns, usage_caption};
 use crate::app::Action;
 use crate::doc::{Doc, INK_MUTED, INK_TEXT};
 use crate::form::FIELD_PAD;
 use crate::library::{Kind, LibraryView, portrait};
-use crate::paint::{Painter, Rect, fade, mix};
+use crate::paint::{Color, Painter, Rect, fade, mix};
 use crate::text::{Align, TextLayout};
-use crate::theme;
+use crate::theme::{self, Palette};
 use crate::ui::{ButtonStyle, Ui, button, chevron, id, keycap, logo};
 
 /// Vertical space between messages.
 const MESSAGE_GAP: f32 = 20.0;
-/// Inner padding of boxed messages.
-const BOX_PAD: (f32, f32) = (12.0, 10.0);
+/// Inner padding of boxed messages and bubbles.
+const BOX_PAD: (f32, f32) = (14.0, 11.0);
 /// Height of the caption row under a reply.
 const META_H: f32 = 30.0;
 /// Height of the "Reasoning" toggle above a reply.
@@ -35,13 +35,19 @@ const EDIT_MIN_H: f32 = 60.0;
 /// Smallest height of a character's bubble being edited.
 const BUBBLE_EDIT_MIN_H: f32 = 44.0;
 /// Size of a character's portrait beside their bubble.
-const AVATAR: f32 = 34.0;
+const AVATAR: f32 = 44.0;
 /// Space between a portrait and its bubble.
-const AVATAR_GAP: f32 = 12.0;
+const AVATAR_GAP: f32 = 14.0;
 /// Height of the name row above a bubble.
-const NAME_H: f32 = 22.0;
+const NAME_H: f32 = 24.0;
 /// Vertical space between the parts of a story reply.
-const PART_GAP: f32 = 14.0;
+const PART_GAP: f32 = 16.0;
+/// How far a scene card's text stays in from the column's edges.
+const SCENE_INSET: f32 = 48.0;
+/// Height of a scene card's ornament, above its text.
+const SCENE_RULE: f32 = 24.0;
+/// How far something new rises as it fades in.
+const RISE: f32 = 8.0;
 
 /// Where a laid-out document was drawn, for hit-testing after the frame.
 struct Target {
@@ -52,6 +58,12 @@ struct Target {
 }
 
 impl Entry {
+    /// What the user said in a story: shown as their character's bubble,
+    /// like the cast's.
+    fn said(&self, story: bool) -> bool {
+        story && self.message.role == Role::User && !self.message.failed
+    }
+
     /// Waiting for the first words of a live reply.
     fn thinking(&self, live: bool) -> bool {
         live && self.display.is_empty()
@@ -70,16 +82,20 @@ impl Entry {
 
     /// Lays out stale parts at `width`; returns their height.
     fn measure_parts(&mut self, p: &Painter, width: f32) -> f32 {
-        let (bubble_wrap, note_wrap) = (width - AVATAR - AVATAR_GAP - 2.0 * BOX_PAD.0, width - AVATAR - AVATAR_GAP);
         self.part_docs.truncate(self.parts.len());
         let mut height = 0.0;
         for (k, part) in self.parts.iter().enumerate() {
-            let wrap = if matches!(part, Part::Note(_)) { note_wrap } else { bubble_wrap };
+            let wrap = match part {
+                Part::Said { .. } => width - AVATAR - AVATAR_GAP - 2.0 * BOX_PAD.0,
+                Part::Scene(_) => width - 2.0 * SCENE_INSET,
+                Part::Note(_) => width - AVATAR - AVATAR_GAP,
+            };
             if !self.part_docs.get(k).is_some_and(|(built, doc)| built == part && doc.fits(wrap, p.scale)) {
                 let previous = self.part_docs.get_mut(k).map(|(_, doc)| std::mem::take(doc));
                 let doc = match part {
                     // While a reply streams, only its last bubble grows.
                     Part::Said { text, .. } => Doc::speech(p.fonts, text, wrap, p.scale, previous),
+                    Part::Scene(scene) => Doc::plain(p.fonts, scene, theme::SCENE, wrap, p.scale),
                     Part::Note(note) => Doc::plain(p.fonts, note, theme::SMALL, wrap, p.scale),
                 };
                 if k < self.part_docs.len() {
@@ -99,7 +115,10 @@ impl Entry {
         self.refresh_display(live, story);
         let boxed = self.boxed();
         let summary = self.message.compaction && !boxed;
-        let wrap = if boxed {
+        let said = self.said(story);
+        let wrap = if said {
+            width - AVATAR - AVATAR_GAP - 2.0 * BOX_PAD.0
+        } else if boxed {
             width - 2.0 * BOX_PAD.0
         } else if summary {
             width - 14.0
@@ -126,6 +145,9 @@ impl Entry {
             }
             self.doc.as_ref().map_or(0.0, |d| d.height)
         };
+        if said {
+            return (NAME_H + doc_h + 2.0 * BOX_PAD.1).max(AVATAR);
+        }
         if boxed {
             return doc_h + 2.0 * BOX_PAD.1;
         }
@@ -371,7 +393,8 @@ impl Chat {
                 for (k, (_, character)) in slots.iter().enumerate().filter(|(_, (id, _))| *id == entry.id) {
                     let field = if let Some(name) = character {
                         // Where the bubble was: under the name, beside the portrait.
-                        let column = speaker(p, (&conversation.cast, player.as_ref(), library), name, (x, top), width);
+                        let people = (&conversation.cast[..], player.as_ref(), library);
+                        let (column, _) = speaker(p, people, name, (x, top), width, 0.0);
                         Rect::new(column, top + NAME_H, width - AVATAR - AVATAR_GAP, field_heights[k])
                     } else {
                         Rect::new(x, top, width, field_heights[k])
@@ -404,15 +427,23 @@ impl Chat {
                 continue;
             }
             if entry.boxed() {
+                let bottom = area.bottom() - if anchors[index].is_some() { META_H } else { 0.0 };
+                let mut boxed = Rect::new(area.x, area.y, area.w, bottom - area.y);
                 let (fill, border, color) = if entry.message.failed {
                     (fade(t.danger, 0.08), fade(t.danger, 0.4), t.danger)
+                } else if entry.said(story) {
+                    // The user's turn reads like the cast's: their character speaks.
+                    let name = player.as_ref().map_or("You", |p| p.name.as_str());
+                    let people = (&conversation.cast[..], player.as_ref(), library);
+                    let (column, ink) = speaker(p, people, name, (x, area.y), width, 0.0);
+                    boxed = Rect::new(column, area.y + NAME_H, area.right() - column, bottom - area.y - NAME_H);
+                    let (fill, border) = bubble_colors(&t, ink);
+                    (fill, border, t.text)
                 } else {
                     (t.surface, t.border, t.text)
                 };
-                let boxed =
-                    Rect::new(area.x, area.y, area.w, area.h - if anchors[index].is_some() { META_H } else { 0.0 });
-                p.bordered(boxed, fill, theme::RADIUS, 1.0, border);
-                let origin = (area.x + BOX_PAD.0, area.y + BOX_PAD.1);
+                p.bordered(boxed, fill, theme::RADIUS + 2.0, 1.0, border);
+                let origin = (boxed.x + BOX_PAD.0, boxed.y + BOX_PAD.1);
                 if let Some(doc) = entry.doc.as_mut().filter(|_| !entry.display.is_empty()) {
                     if let Some((a, b)) = sel(1, doc) {
                         doc.draw_selection(p, origin, a, b);
@@ -422,7 +453,7 @@ impl Chat {
                         entry: index,
                         doc: 1,
                         origin,
-                        rect: Rect::new(origin.0, origin.1, width, doc.height),
+                        rect: Rect::new(origin.0, origin.1, boxed.w - 2.0 * BOX_PAD.0, doc.height),
                     });
                 }
                 if let Some(buttons) = &actions_for {
@@ -520,6 +551,12 @@ impl Chat {
             }
             if entry.bubbles() {
                 let column = x + AVATAR + AVATAR_GAP;
+                // Whoever a live reply is giving voice to right now.
+                let speaking = if live {
+                    entry.part_docs.iter().rposition(|(part, _)| matches!(part, Part::Said { .. }))
+                } else {
+                    None
+                };
                 for (k, (part, doc)) in entry.part_docs.iter_mut().enumerate() {
                     let Ok(doc_id) = u8::try_from(k + 2) else { break };
                     if k > 0 {
@@ -530,27 +567,52 @@ impl Chat {
                         top += height;
                         continue;
                     }
+                    // What a live reply adds fades in, rising into place.
+                    let appear = if live { ui.appear(id(("part", entry.id, k))) } else { 1.0 };
+                    let y = top + (1.0 - appear) * RISE;
                     let (origin, color, rect) = match part {
-                        Part::Note(_) => {
-                            // A change to the story: a dot in the portraits' column.
-                            let mid = doc.texts.first().map_or(8.0, |t| t.layout.height() * 0.5);
-                            p.rect(Rect::new(x + AVATAR * 0.5 - 2.5, top + mid - 2.5, 5.0, 5.0), t.border_strong, 2.5);
-                            (
-                                (column, top),
-                                t.text_faint,
-                                Rect::new(column, top, width - AVATAR - AVATAR_GAP, doc.height),
-                            )
+                        Part::Scene(_) => {
+                            // A chapter break: an ornament, then where the story is now.
+                            let cx = (x + width * 0.5).round();
+                            let rule_y = (y + SCENE_RULE * 0.5 - 3.0).round();
+                            let rule = fade(t.border_strong, 0.9);
+                            p.rect(Rect::new(cx - 76.0, rule_y + 2.5, 60.0, 1.0), rule, 0.0);
+                            p.rect(Rect::new(cx + 16.0, rule_y + 2.5, 60.0, 1.0), rule, 0.0);
+                            p.rect(Rect::new(cx - 3.0, rule_y, 6.0, 6.0), fade(t.accent, 0.8), 1.5);
+                            let text_w = doc.texts.first().map_or(0.0, |piece| piece.layout.width());
+                            let origin = ((cx - text_w * 0.5).round(), y + SCENE_RULE);
+                            (origin, t.text_muted, Rect::new(origin.0, origin.1, text_w, doc.height))
+                        }
+                        Part::Note(note) => {
+                            // A change to the story: a dot in the portraits' column,
+                            // in the colour of whoever it is about.
+                            let mid = doc.texts.first().map_or(8.0, |piece| piece.layout.height() * 0.5);
+                            let about = conversation
+                                .cast
+                                .iter()
+                                .find(|m| note.strip_prefix(m.name.as_str()).is_some_and(|rest| rest.starts_with(' ')));
+                            let ink = about.map_or(t.border_strong, |m| theme::character_color(&t, &m.name));
+                            p.rect(Rect::new(x + AVATAR * 0.5 - 3.0, y + mid - 3.0, 6.0, 6.0), ink, 3.0);
+                            ((column, y), t.text_faint, Rect::new(column, y, width - AVATAR - AVATAR_GAP, doc.height))
                         }
                         Part::Said { character, .. } => {
-                            speaker(p, (&conversation.cast, player.as_ref(), library), character, (x, top), width);
+                            let glow = if speaking == Some(k) {
+                                ui.animating = true;
+                                (ui.time * 3.0).sin() * 0.5 + 0.5
+                            } else {
+                                0.0
+                            };
+                            let people = (&conversation.cast[..], player.as_ref(), library);
+                            let (column, ink) = speaker(p, people, character, (x, y), width, glow);
                             // Every bubble spans the column, whatever its text.
                             let bubble = Rect::new(
                                 column,
-                                top + NAME_H,
+                                y + NAME_H,
                                 width - AVATAR - AVATAR_GAP,
                                 doc.height + 2.0 * BOX_PAD.1,
                             );
-                            p.bordered(bubble, t.surface, theme::RADIUS, 1.0, t.border);
+                            let (fill, border) = bubble_colors(&t, ink);
+                            p.bordered(bubble, fill, theme::RADIUS + 2.0, 1.0, border);
                             let origin = (bubble.x + BOX_PAD.0, bubble.y + BOX_PAD.1);
                             (origin, t.text, Rect::new(origin.0, origin.1, bubble.w - 2.0 * BOX_PAD.0, doc.height))
                         }
@@ -564,6 +626,11 @@ impl Chat {
                     let event = doc.draw(p, ui, origin, color, in_view, None);
                     effects.link = effects.link.take().or(event.open_link);
                     targets.push(Target { entry: index, doc: doc_id, origin, rect });
+                    if appear < 1.0 {
+                        // Fading in: the background, thinning, over what was drawn.
+                        let cover = Rect::new(x - AVATAR_GAP, y - 4.0, width + 2.0 * AVATAR_GAP, height + 8.0);
+                        p.rect(cover, fade(t.bg, 1.0 - appear), 0.0);
+                    }
                     top += height;
                 }
             } else if let Some(doc) = &mut entry.doc {
@@ -802,34 +869,49 @@ fn turn_buttons(p: &mut Painter, ui: &mut Ui, right: f32, y: f32, buttons: &Turn
     clicked
 }
 
-/// Draws the portrait of whoever `name` means in the story (from its
-/// cast, with the library that holds the images) at `(x, top)` and their
-/// name beside it, in a column `width` wide: the member's name now, even
-/// when the reply used an older or shorter one. Returns where their bubble
-/// starts.
+/// Draws the portrait of whoever `name` means in the story (a cast member
+/// or the user's character, with the library that holds the images) at
+/// `(x, top)`, ringed in their colour, and their name beside it in that
+/// colour, in a column `width` wide: their name now, even when the reply
+/// used an older or shorter one. `glow` (0 to 1) brightens the ring while
+/// they speak. Returns where their bubble starts, and their colour.
 fn speaker(
     p: &mut Painter,
     (cast, player, library): (&[CastMember], Option<&Player>, &LibraryView),
     name: &str,
     (x, top): (f32, f32),
     width: f32,
-) -> f32 {
-    let member = names::member(cast, player, name).map(|i| &cast[i]);
-    let path = member.and_then(|m| library.portrait_path(&m.portrait));
-    let name = member.map_or(name, |m| m.name.as_str());
-    portrait(p, path.as_deref(), name, Rect::new(x, top, AVATAR, AVATAR), AVATAR * 0.5);
+    glow: f32,
+) -> (f32, Color) {
+    let (shown, image) = match names::resolve(cast, player, name) {
+        Some(Who::Member(index)) => (cast[index].name.as_str(), cast[index].portrait.as_str()),
+        Some(Who::Player) => player.map_or((name, ""), |p| (p.name.as_str(), p.portrait.as_str())),
+        None => (name, ""),
+    };
+    let ink = theme::character_color(&p.theme, shown);
+    let face = Rect::new(x, top, AVATAR, AVATAR);
+    let path = if image.is_empty() { None } else { library.portrait_path(image) };
+    portrait(p, path.as_deref(), shown, face, AVATAR * 0.5);
+    let ring = Rect::new(face.x - 3.0, face.y - 3.0, face.w + 6.0, face.h + 6.0);
+    p.bordered(ring, [0.0; 4], ring.w * 0.5, 1.5 + glow, fade(ink, 0.45 + 0.55 * glow));
     let column = x + AVATAR + AVATAR_GAP;
-    let mut label = p.layout(name, theme::LABEL, None);
+    let mut label = p.layout(shown, theme::LABEL, None);
     label.truncate(p.fonts, width - AVATAR - AVATAR_GAP);
-    p.text(&label, column, top + (NAME_H - 4.0 - label.height()) * 0.5, p.theme.text);
-    column
+    p.text(&label, column + 2.0, top + (NAME_H - 4.0 - label.height()) * 0.5, ink);
+    (column, ink)
 }
 
-/// Height of a story reply's `part`, laid out as `doc`: a note's text, or
-/// a character's name and bubble beside their portrait.
+/// A bubble's fill and border, tinted with its speaker's colour `ink`.
+fn bubble_colors(t: &Palette, ink: Color) -> (Color, Color) {
+    (mix(t.surface, ink, 0.045), mix(t.border, ink, 0.32))
+}
+
+/// Height of a story reply's `part`, laid out as `doc`: a note's text, a
+/// scene card, or a character's name and bubble beside their portrait.
 fn part_height(part: &Part, doc: &Doc) -> f32 {
     match part {
         Part::Note(_) => doc.height,
+        Part::Scene(_) => SCENE_RULE + doc.height + 6.0,
         Part::Said { .. } => (NAME_H + doc.height + 2.0 * BOX_PAD.1).max(AVATAR),
     }
 }
@@ -916,20 +998,25 @@ fn selected_range(
 fn draw_empty(p: &mut Painter, ui: &mut Ui, view: Rect, story: Option<(&str, Option<&str>)>) -> bool {
     let t = p.theme;
     let cx = view.x + view.w * 0.5;
-    let top = view.y + (view.h * 0.5 - 190.0).max(24.0);
+    let lift = if story.is_some_and(|(_, path)| path.is_some()) { 300.0 } else { 190.0 };
+    let top = view.y + (view.h * 0.5 - lift).max(24.0);
     let wrap = Some((view.w - 64.0).min(520.0));
     let (title, subtitle, mut y) = if let Some((name, path)) = story {
-        portrait(p, path, name, Rect::new(cx - 36.0, top, 72.0, 72.0), theme::RADIUS);
+        // The world's picture, large, sets the mood; without one, its initial.
+        let side = if path.is_some() { ((view.w - 64.0).min(380.0), 212.0) } else { (88.0, 88.0) };
+        let picture = Rect::new((cx - side.0 * 0.5).round(), top, side.0, side.1);
+        portrait(p, path, name, picture, theme::RADIUS + 4.0);
+        p.bordered(picture, [0.0; 4], theme::RADIUS + 4.0, 1.0, fade(t.border_strong, 0.7));
         (
             name,
             "Your story begins here. Say where you are and who you meet: the characters answer, and anyone not cast yet is created.",
-            top + 92.0,
+            picture.bottom() + 22.0,
         )
     } else {
         logo(p, Rect::new(cx - 18.0, top, 36.0, 36.0));
         ("Pick a world to play", "Stories happen in worlds: create one, or choose one and press Play.", top + 56.0)
     };
-    let title = p.layout(title, theme::TITLE, wrap);
+    let title = p.layout(title, if story.is_some() { theme::DISPLAY } else { theme::TITLE }, wrap);
     p.text_aligned(&title, cx - title.width() * 0.5, y, Align::Center, title.width(), t.text);
     y += title.height() + 8.0;
     let subtitle = p.layout(subtitle, theme::SMALL, wrap);

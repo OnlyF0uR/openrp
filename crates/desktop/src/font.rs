@@ -1,7 +1,8 @@
 //! Font faces and fallback.
 //!
-//! Embedded: Inter (regular, semibold, italic) for UI and prose, JetBrains
-//! Mono for code, and Twemoji for colour emoji. Scripts those don't cover
+//! Embedded: Inter (regular, semibold, italic) for UI and replies, Literata
+//! (regular, italic, semibold) for story prose, JetBrains Mono for code, and
+//! Twemoji for colour emoji. Scripts those don't cover
 //! (Chinese, Japanese, Korean, and so on) come from the operating system's
 //! fonts, loaded lazily the first time a character needs them.
 //!
@@ -38,7 +39,13 @@ impl FontId {
     pub const MONO: Self = Self(3);
     /// Twemoji: colour emoji.
     pub const EMOJI: Self = Self(4);
-    const EMBEDDED: usize = 5;
+    /// Literata Regular: what characters say.
+    pub const SERIF: Self = Self(5);
+    /// Literata Italic: what characters do.
+    pub const SERIF_ITALIC: Self = Self(6);
+    /// Literata SemiBold: emphasis and titles in a story.
+    pub const SERIF_BOLD: Self = Self(7);
+    const EMBEDDED: usize = 8;
 }
 
 /// A colour-glyph layer: glyph id and its colour, or `None` for "text colour".
@@ -358,6 +365,9 @@ impl Fonts {
                 embedded(include_bytes!("../assets/Inter-Italic.ttf")),
                 embedded(include_bytes!("../assets/JetBrainsMono-Regular.ttf")),
                 embedded(include_bytes!("../assets/Twemoji.Mozilla.ttf")),
+                embedded(include_bytes!("../assets/Literata-Regular.ttf")),
+                embedded(include_bytes!("../assets/Literata-Italic.ttf")),
+                embedded(include_bytes!("../assets/Literata-SemiBold.ttf")),
             ],
             fallbacks: system_fallbacks(),
             resolved: RefCell::default(),
@@ -391,7 +401,7 @@ impl Fonts {
             .glyph(c)
             .map(|g| (FontId::EMOJI, g))
             .or_else(|| self.face(primary).glyph(c).map(|g| (primary, g)))
-            // Italic and mono lack some symbols the regular face has.
+            // Italic, mono and serif lack some symbols the regular face has.
             .or_else(|| self.face(FontId::REGULAR).glyph(c).map(|g| (FontId::REGULAR, g)))
             .or_else(|| {
                 self.fallbacks.iter().enumerate().filter(|(_, f)| (f.covers)(c)).find_map(|(i, fallback)| {
@@ -420,6 +430,12 @@ mod tests {
             }
         }
         assert!(fonts.face(FontId::MONO).glyph('{').is_some());
+        // Story prose: accented Latin and Cyrillic in every serif face.
+        for id in [FontId::SERIF, FontId::SERIF_ITALIC, FontId::SERIF_BOLD] {
+            for c in ['a', 'é', 'ł', 'ж', '—', '…', '“'] {
+                assert_eq!(fonts.resolve(id, c, None).0, id, "{c:?} missing from {id:?}");
+            }
+        }
     }
 
     #[test]

@@ -18,6 +18,7 @@ use crate::app::Action;
 use crate::form::{FIELD_PAD, Fields};
 use crate::library::{Kind, Record, name_editor, portrait, text_editor};
 use crate::paint::{Painter, Rect, fade, hexa, mix};
+use crate::text::Style;
 use crate::theme;
 use crate::ui::{ButtonStyle, Ui, button, id};
 
@@ -38,10 +39,10 @@ const MEMORY_WIDTH: f32 = 640.0;
 const MEMORY_GAP: f32 = 8.0;
 /// Size of the button removing a memory.
 const REMOVE: f32 = 28.0;
-/// Height of a persona's chip in the player form.
-const CHIP_H: f32 = 26.0;
-/// Most personas shown as chips; the rest are a search away.
-const PERSONA_CHIPS: usize = 6;
+/// Height of a persona's card in the player form.
+const PERSONA_H: f32 = 56.0;
+/// Most personas shown as cards; the rest are a search away.
+const PERSONA_CARDS: usize = 4;
 
 /// Whether who the user plays is kept as a persona.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -199,6 +200,19 @@ impl Chat {
         let mut personas: Vec<&Record> = self.library.list(Kind::Persona).iter().collect();
         personas.sort_by_key(|r| !r.favorite);
         personas
+    }
+
+    /// The id of the persona the player form is filled in with, if it is
+    /// exactly one of them.
+    pub(super) fn player_choice(&mut self) -> Option<String> {
+        let form = self.character_form().filter(|f| f.subject == Subject::Player)?;
+        let (name, description) =
+            (form.fields.text(NAME).trim().to_owned(), form.fields.text(DESCRIPTION).trim().to_owned());
+        let photo = form.portrait.clone();
+        self.persona_choices()
+            .into_iter()
+            .find(|r| names::same(&r.name, &name) && r.description == description && r.portrait == photo)
+            .map(|r| r.id.clone())
     }
 
     /// Fills the player form with persona `index` of [`Chat::persona_choices`].
@@ -497,10 +511,10 @@ impl Chat {
         // whether what is typed is kept as one.
         let (personas, more, kept) = if subject == Subject::Player {
             let choices = self.persona_choices();
-            let more = choices.len().saturating_sub(PERSONA_CHIPS);
+            let more = choices.len().saturating_sub(PERSONA_CARDS);
             let personas: Vec<(Record, Option<String>)> = choices
                 .into_iter()
-                .take(PERSONA_CHIPS)
+                .take(PERSONA_CARDS)
                 .map(|r| (r.clone(), self.library.portrait_path(&r.portrait)))
                 .collect();
             let kept = (!name.is_empty()).then(|| match self.library.persona_named(&name) {
@@ -576,27 +590,13 @@ impl Chat {
         let error = error.map(|e| p.layout(&e, theme::SMALL, Some(inner)));
         let error_h = error.as_ref().map_or(0.0, |e| e.height() + 12.0);
         let name_block = if name_layout.is_some() { 22.0 + name_h + 20.0 } else { 0.0 };
-        // The personas, as chips after a label, wrapping.
-        let play_as = p.layout("Play as", theme::CAPTION, None);
-        let start = play_as.width() + 12.0;
-        let mut chips = Vec::with_capacity(personas.len() + 1);
-        let (mut at_x, mut at_y) = (start, 0.0);
-        // Each persona's chip, then one opening the rest, searched.
-        let chip_labels = personas
-            .iter()
-            .map(|(record, path)| (record.name.clone(), path.is_some()))
-            .chain((more > 0).then(|| (format!("{more} more…"), false)));
-        for (chip_label, has_face) in chip_labels {
-            let mut text = p.layout(&chip_label, theme::SMALL, None);
-            text.truncate(p.fonts, 160.0);
-            let chip_w = text.width() + 22.0 + if has_face { CHIP_H - 4.0 } else { 0.0 };
-            if at_x + chip_w > inner && at_x > start {
-                (at_x, at_y) = (start, at_y + CHIP_H + 6.0);
-            }
-            chips.push(((at_x, at_y, chip_w), text));
-            at_x += chip_w + 6.0;
-        }
-        let personas_h = if chips.is_empty() { 0.0 } else { at_y + CHIP_H + 18.0 };
+        // The personas, as cards of two columns: face, name and the note
+        // telling apart those of the same name; the rest are a search away.
+        let card_w = ((inner - 8.0) * 0.5).floor();
+        let card_rows = personas.len().div_ceil(2) as f32;
+        let more_h = if more > 0 { 34.0 } else { 0.0 };
+        let personas_h =
+            if personas.is_empty() { 0.0 } else { 22.0 + card_rows * (PERSONA_H + 8.0) - 8.0 + more_h + 20.0 };
         let height = 24.0 + 30.0 + note_h + personas_h + name_block + 22.0 + body_h + error_h + 24.0 + 34.0 + 24.0;
         let card = Rect::new(
             area.x + ((area.w - width) * 0.5).round(),
@@ -620,61 +620,65 @@ impl Chat {
         y += note_h;
 
         let (mut picked, mut open_more) = (None, None);
-        if !chips.is_empty() {
-            p.text(&play_as, x, y + (CHIP_H - play_as.height()) * 0.5, t.text_faint);
-            for (index, ((dx, dy, chip_w), text)) in chips.iter().enumerate() {
-                let chip = Rect::new(x + dx, y + dy, *chip_w, CHIP_H);
-                let Some((record, path)) = personas.get(index) else {
-                    // The rest of the personas, in a menu that searches them.
-                    let hovered = ui.hovered(chip);
-                    let hover = ui.anim(id("persona-more"), f32::from(u8::from(hovered || more_open)));
-                    p.bordered(chip, fade(t.hover, hover), CHIP_H * 0.5, 1.0, t.border_strong);
-                    p.text(
-                        text,
-                        chip.x + 11.0,
-                        chip.y + (CHIP_H - text.height()) * 0.5,
-                        mix(t.text_muted, t.text, hover),
-                    );
-                    if hovered {
-                        ui.cursor = CursorIcon::Pointer;
-                        if ui.clicked(chip) {
-                            open_more = Some(chip);
-                        }
-                    }
-                    continue;
-                };
+        if !personas.is_empty() {
+            p.label("PLAY AS", Style { size: 10.5, ..theme::CAPTION }, x, y, t.text_faint);
+            let top = y + 22.0;
+            for (index, (record, path)) in personas.iter().enumerate() {
+                let (column, row) = ((index % 2) as f32, (index / 2) as f32);
+                let card = Rect::new(x + column * (card_w + 8.0), top + row * (PERSONA_H + 8.0), card_w, PERSONA_H);
                 let chosen =
                     names::same(&record.name, &name) && record.description == description && record.portrait == photo;
-                let hovered = ui.hovered(chip);
+                let hovered = ui.hovered(card);
                 let hover = ui.anim(id(("persona", &record.id)), f32::from(u8::from(hovered)));
+                let ink = theme::character_color(&t, &record.name);
                 if chosen {
-                    p.rect(chip, fade(t.accent, 0.14 + 0.1 * hover), CHIP_H * 0.5);
+                    p.bordered(card, mix(t.surface, t.accent, 0.08), theme::RADIUS, 1.0, fade(t.accent, 0.7));
                 } else {
                     p.bordered(
-                        chip,
+                        card,
                         mix(t.surface, t.hover, hover),
-                        CHIP_H * 0.5,
+                        theme::RADIUS,
                         1.0,
                         mix(t.border, t.border_strong, hover),
                     );
                 }
-                let mut text_x = chip.x + 11.0;
-                if let Some(path) = path {
-                    let face = Rect::new(chip.x + 3.0, chip.y + 3.0, CHIP_H - 6.0, CHIP_H - 6.0);
-                    portrait(p, Some(path), &record.name, face, face.w * 0.5);
-                    text_x = face.right() + 7.0;
-                }
+                let face = Rect::new(card.x + 10.0, card.y + (PERSONA_H - 36.0) * 0.5, 36.0, 36.0);
+                portrait(p, path.as_deref(), &record.name, face, 18.0);
+                p.bordered(Rect::new(face.x - 2.0, face.y - 2.0, 40.0, 40.0), [0.0; 4], 20.0, 1.5, fade(ink, 0.7));
+                let text_x = face.right() + 12.0;
+                let width = card.right() - 10.0 - text_x;
+                let mut label = p.layout(&record.name, theme::LABEL, None);
+                label.truncate(p.fonts, width);
+                let about = if record.comment.is_empty() {
+                    record.description.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("No description")
+                } else {
+                    record.comment.as_str()
+                };
+                let mut note = p.layout(about, theme::SMALL, None);
+                note.truncate(p.fonts, width);
+                let block = label.height() + 1.0 + note.height();
+                let line_y = card.y + ((PERSONA_H - block) * 0.5).round();
+                p.text(&label, text_x, line_y, t.text);
                 p.text(
-                    text,
+                    &note,
                     text_x,
-                    chip.y + (CHIP_H - text.height()) * 0.5,
-                    if chosen || hovered { t.text } else { t.text_muted },
+                    line_y + label.height() + 1.0,
+                    if record.comment.is_empty() { t.text_faint } else { t.text_muted },
                 );
                 if hovered {
                     ui.cursor = CursorIcon::Pointer;
-                    if ui.clicked(chip) {
+                    if ui.clicked(card) {
                         picked = Some(index);
                     }
+                }
+            }
+            if more > 0 {
+                let total = personas.len() + more;
+                let label = format!("All {total} personas…");
+                let more_w = p.layout(&label, theme::LABEL, None).width() + 24.0;
+                let rect = Rect::new(x - 6.0, top + card_rows * (PERSONA_H + 8.0), more_w, 28.0);
+                if button(p, ui, rect, &label, ButtonStyle::Ghost, !more_open) {
+                    open_more = Some(rect);
                 }
             }
             y += personas_h;

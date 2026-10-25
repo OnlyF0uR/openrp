@@ -301,10 +301,10 @@ pub fn transcript(messages: &[StoredMessage], player: &str, limit: usize) -> Str
                 Part::Said { character, text } => {
                     let _ = writeln!(out, "{character}: {text}\n");
                 }
-                Part::Note(note) if !note.starts_with("Remembered: ") => {
+                Part::Scene(note) | Part::Note(note) if !note.starts_with("Remembered: ") => {
                     let _ = writeln!(out, "[{note}]\n");
                 }
-                Part::Note(_) => {}
+                Part::Scene(_) | Part::Note(_) => {}
             }
         }
     }
@@ -597,7 +597,9 @@ pub enum Part {
         /// Markdown: their actions in italics, and their words.
         text: String,
     },
-    /// A change to the story (scene, arrival, departure), shown small.
+    /// Where the story is now, as the reply set it: shown as a scene card.
+    Scene(String),
+    /// A change to the story (arrival, departure, memory), shown small.
     Note(String),
 }
 
@@ -616,8 +618,8 @@ pub fn parts<'a>(calls: impl Iterator<Item = (&'a str, &'a str)>) -> Vec<Part> {
             continue;
         };
         // A new scene first, as it is written: it sets the stage.
-        let scene = Part::Note(plain(&text(&args, "scene")));
-        if !matches!(&scene, Part::Note(s) if s.is_empty()) && !parts.contains(&scene) {
+        let scene = Part::Scene(plain(&text(&args, "scene")));
+        if !matches!(&scene, Part::Scene(s) if s.is_empty()) && !parts.contains(&scene) {
             parts.push(scene);
         }
         for message in messages(&args) {
@@ -795,7 +797,7 @@ pub fn display(parts: &[Part]) -> String {
         .iter()
         .map(|part| match part {
             Part::Said { character, text } => format!("**{character}**: {text}"),
-            Part::Note(note) => format!("*{note}*"),
+            Part::Scene(note) | Part::Note(note) => format!("*{note}*"),
         })
         .collect();
     blocks.join("\n\n")
@@ -1074,7 +1076,7 @@ mod tests {
         assert_eq!(calls[0], created, "other calls stay");
         assert_eq!((calls[1].call.call_id.as_str(), calls[1].output.as_str()), ("a", "Spoken. Spoken."));
         let shown = parts(calls.iter().map(|r| (r.call.name.as_str(), r.call.arguments.as_str())));
-        assert_eq!(shown, [Part::Note("The woods.".into()), said("Katniss", "Hello there."), said("Rue", "Hey.")]);
+        assert_eq!(shown, [Part::Scene("The woods.".into()), said("Katniss", "Hello there."), said("Rue", "Hey.")]);
         // A reply read back from text gets a call.
         let mut none = Vec::new();
         respeak(&mut none, &[("Katniss", "Hi.")]);

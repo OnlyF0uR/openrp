@@ -101,7 +101,19 @@ impl Ui {
 
     /// Eases the value stored under `id` towards `target` and returns it.
     pub fn anim(&mut self, id: u64, target: f32) -> f32 {
-        let (value, used) = self.anims.entry(id).or_insert((target, self.frame));
+        self.ease(id, target, target)
+    }
+
+    /// Eases from 0 to 1 from the first frame `id` is drawn in: something
+    /// arriving fades in. Drawn again after a frame without it, it arrives
+    /// again, so callers use it only for what is new.
+    pub fn appear(&mut self, id: u64) -> f32 {
+        self.ease(id, 1.0, 0.0)
+    }
+
+    /// Eases the value under `id` (starting at `initial`) towards `target`.
+    fn ease(&mut self, id: u64, target: f32, initial: f32) -> f32 {
+        let (value, used) = self.anims.entry(id).or_insert((initial, self.frame));
         *used = self.frame;
         let t = 1.0 - (-self.dt * 16.0).exp();
         *value += (target - *value) * t;

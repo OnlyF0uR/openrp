@@ -178,12 +178,14 @@ impl SettingsView {
                 let preview_h = (card_w * 0.58).round();
                 let card_h = preview_h + 52.0;
                 for (i, choice) in Scheme::ALL.into_iter().enumerate() {
-                    let card = Rect::new(x + i as f32 * (card_w + 12.0), y, card_w, card_h);
+                    let (column, row) = ((i % 3) as f32, (i / 3) as f32);
+                    let card = Rect::new(x + column * (card_w + 12.0), y + row * (card_h + 12.0), card_w, card_h);
                     if theme_card(p, ui, card, preview_h, choice, choice == scheme) && choice != scheme {
                         actions.push(Action::SetTheme(choice));
                     }
                 }
-                y += card_h + SECTION_GAP;
+                let rows = Scheme::ALL.len().div_ceil(3) as f32;
+                y += rows * (card_h + 12.0) - 12.0 + SECTION_GAP;
 
                 y = section(p, x, y, "Chat", "How replies from thinking models look.");
                 let row = group(p, x, y, width);

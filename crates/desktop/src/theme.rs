@@ -2,11 +2,13 @@
 //!
 //! Colours live in a [`Palette`] so the scheme can change at runtime; the
 //! painter carries the active one (`p.theme`). Sizes and text styles are the
-//! same in every scheme. The look is Zed-inspired: flat surfaces, hairline
-//! borders, small radii and a single accent.
+//! same in every scheme. The chrome is Zed-inspired: flat surfaces, hairline
+//! borders, small radii and one accent. The story itself is warmer: prose
+//! in a serif, and every character in a colour of their own
+//! ([`character_color`]), so a busy scene reads at a glance.
 
 use crate::paint::{Color, hex, hexa, mix};
-use crate::text::Style;
+use crate::text::{FontId, Style};
 
 /// Every colour the UI uses.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -47,6 +49,10 @@ pub struct Palette {
     pub code_bg: Color,
     /// Links in replies.
     pub link: Color,
+    /// Laid over a picture so text on it stays legible.
+    pub scrim: Color,
+    /// Text drawn on [`Palette::scrim`].
+    pub on_scrim: Color,
     /// Syntax colours: keyword, string, number, comment, function, type.
     pub syntax: [Color; 6],
 }
@@ -75,8 +81,16 @@ impl Palette {
             shadow: m(self.shadow, other.shadow),
             code_bg: m(self.code_bg, other.code_bg),
             link: m(self.link, other.link),
+            scrim: m(self.scrim, other.scrim),
+            on_scrim: m(self.on_scrim, other.on_scrim),
             syntax: std::array::from_fn(|i| m(self.syntax[i], other.syntax[i])),
         }
+    }
+
+    /// Whether text is dark on a light background.
+    #[must_use]
+    pub fn is_light(&self) -> bool {
+        self.bg[0] + self.bg[1] + self.bg[2] > 1.5
     }
 }
 
@@ -100,6 +114,8 @@ pub const DARK: Palette = Palette {
     shadow: hexa(0x000000, 0.5),
     code_bg: hex(0x1B1B1E),
     link: hex(0x8AB4F8),
+    scrim: hexa(0x0B0B0D, 0.62),
+    on_scrim: hex(0xF4F4F6),
     // GitHub Dark.
     syntax: [hex(0xFF7B72), hex(0xA5D6FF), hex(0x79C0FF), hex(0x8B949E), hex(0xD2A8FF), hex(0xFFA657)],
 };
@@ -124,6 +140,8 @@ pub const BLUE: Palette = Palette {
     shadow: hexa(0x000000, 0.35),
     code_bg: hex(0x23272E),
     link: hex(0x74ADE8),
+    scrim: hexa(0x16191E, 0.62),
+    on_scrim: hex(0xF0F2F5),
     // Zed One Dark.
     syntax: [hex(0xB477CF), hex(0xA1C181), hex(0xBF956A), hex(0x5D636F), hex(0x73ADE9), hex(0x6EB4BF)],
 };
@@ -148,8 +166,62 @@ pub const LIGHT: Palette = Palette {
     shadow: hexa(0x000000, 0.1),
     code_bg: hex(0xF6F6F8),
     link: hex(0x2563EB),
+    scrim: hexa(0x0F0F12, 0.55),
+    on_scrim: hex(0xFFFFFF),
     // GitHub Light.
     syntax: [hex(0xCF222E), hex(0x0A3069), hex(0x0550AE), hex(0x6E7781), hex(0x8250DF), hex(0x953800)],
+};
+
+/// Warm charcoal lit by an amber accent, like a page by lamplight.
+pub const EMBER: Palette = Palette {
+    bg: hex(0x16130F),
+    panel: hex(0x1C1814),
+    surface: hex(0x221D18),
+    hover: hex(0x2C261F),
+    active: hex(0x362F27),
+    border: hex(0x2C261F),
+    border_strong: hex(0x3E362C),
+    border_focus: hex(0x7A6650),
+    text: hex(0xEFE6DA),
+    text_muted: hex(0xB3A794),
+    text_faint: hex(0x7C7061),
+    accent: hex(0xE8A55E),
+    on_accent: hex(0x1A140E),
+    selection: hexa(0xE8A55E, 0.22),
+    danger: hex(0xE5736A),
+    shadow: hexa(0x000000, 0.5),
+    code_bg: hex(0x1B1713),
+    link: hex(0xF2BA74),
+    scrim: hexa(0x0E0B08, 0.62),
+    on_scrim: hex(0xF6EEE3),
+    // Gruvbox Dark.
+    syntax: [hex(0xF07A62), hex(0xB8BB26), hex(0xD3869B), hex(0x928374), hex(0x83A598), hex(0xFABD2F)],
+};
+
+/// Old paper and sepia ink, with a burnt-sienna accent.
+pub const PARCHMENT: Palette = Palette {
+    bg: hex(0xF7F1E6),
+    panel: hex(0xEFE7D8),
+    surface: hex(0xFCF8F0),
+    hover: hex(0xE9DFCC),
+    active: hex(0xE0D4BE),
+    border: hex(0xE3D8C4),
+    border_strong: hex(0xD2C4AB),
+    border_focus: hex(0xA8916F),
+    text: hex(0x2A2118),
+    text_muted: hex(0x6B5B4B),
+    text_faint: hex(0x9C8C78),
+    accent: hex(0x9A4F1C),
+    on_accent: hex(0xFFF8EE),
+    selection: hexa(0x9A4F1C, 0.18),
+    danger: hex(0xC0392B),
+    shadow: hexa(0x3B2A14, 0.12),
+    code_bg: hex(0xF1E9DA),
+    link: hex(0x2F6690),
+    scrim: hexa(0x1E150C, 0.55),
+    on_scrim: hex(0xFFF9F0),
+    // Gruvbox Light.
+    syntax: [hex(0x9D0006), hex(0x79740E), hex(0x8F3F71), hex(0x928374), hex(0x076678), hex(0xB57614)],
 };
 
 /// The colour schemes offered in settings.
@@ -158,23 +230,29 @@ pub enum Scheme {
     /// [`DARK`].
     #[default]
     Dark,
+    /// [`EMBER`].
+    Ember,
     /// [`BLUE`].
     Blue,
     /// [`LIGHT`].
     Light,
+    /// [`PARCHMENT`].
+    Parchment,
 }
 
 impl Scheme {
     /// Every scheme, in settings order.
-    pub const ALL: [Self; 3] = [Self::Dark, Self::Blue, Self::Light];
+    pub const ALL: [Self; 5] = [Self::Dark, Self::Ember, Self::Blue, Self::Light, Self::Parchment];
 
     /// Its colours.
     #[must_use]
     pub fn palette(self) -> &'static Palette {
         match self {
             Self::Dark => &DARK,
+            Self::Ember => &EMBER,
             Self::Blue => &BLUE,
             Self::Light => &LIGHT,
+            Self::Parchment => &PARCHMENT,
         }
     }
 
@@ -183,8 +261,10 @@ impl Scheme {
     pub fn label(self) -> &'static str {
         match self {
             Self::Dark => "Dark",
+            Self::Ember => "Ember",
             Self::Blue => "One Dark",
             Self::Light => "Light",
+            Self::Parchment => "Parchment",
         }
     }
 
@@ -193,8 +273,10 @@ impl Scheme {
     pub fn key(self) -> &'static str {
         match self {
             Self::Dark => "dark",
+            Self::Ember => "ember",
             Self::Blue => "blue",
             Self::Light => "light",
+            Self::Parchment => "parchment",
         }
     }
 
@@ -207,7 +289,50 @@ impl Scheme {
     /// Whether the OS chrome (title bar) should be light.
     #[must_use]
     pub fn is_light(self) -> bool {
-        self == Self::Light
+        self.palette().is_light()
+    }
+}
+
+/// The colour of the character called `name` in `palette`: the same hue
+/// wherever they appear (their name, bubble, portrait ring and initial),
+/// light on dark schemes and deep on light ones. Picked from the name, so
+/// it needs nothing stored, and the same name always gets the same colour.
+#[must_use]
+pub fn character_color(palette: &Palette, name: &str) -> Color {
+    // FNV-1a over the name as names are compared: case and marks ignored.
+    let mut hash: u32 = 0x811C_9DC5;
+    for c in name.chars().flat_map(char::to_lowercase).filter(|c| c.is_alphanumeric()) {
+        hash = (hash ^ c as u32).wrapping_mul(0x0100_0193);
+    }
+    let hue = (hash % 360) as f32;
+    let (lightness, chroma) = if palette.is_light() { (0.5, 0.13) } else { (0.78, 0.11) };
+    oklch(lightness, chroma, hue)
+}
+
+/// An opaque sRGB colour from OKLCH (perceptual lightness 0–1, chroma,
+/// hue in degrees), its chroma reduced until it fits sRGB.
+fn oklch(lightness: f32, chroma: f32, hue: f32) -> Color {
+    let (sin, cos) = hue.to_radians().sin_cos();
+    let mut chroma = chroma;
+    loop {
+        // OKLab's axes, then the cone responses (long, medium, short).
+        let (green_red, blue_yellow) = (chroma * cos, chroma * sin);
+        let long = (lightness + 0.396_337_8 * green_red + 0.215_803_76 * blue_yellow).powi(3);
+        let medium = (lightness - 0.105_561_35 * green_red - 0.063_854_17 * blue_yellow).powi(3);
+        let short = (lightness - 0.089_484_18 * green_red - 1.291_485_5 * blue_yellow).powi(3);
+        let linear = [
+            4.076_741_7 * long - 3.307_711_6 * medium + 0.230_969_94 * short,
+            -1.268_438 * long + 2.609_757_4 * medium - 0.341_319_38 * short,
+            -0.004_196_086 * long - 0.703_418_6 * medium + 1.707_614_7 * short,
+        ];
+        if chroma < 0.005 || linear.iter().all(|c| (0.0..=1.0).contains(c)) {
+            let encode = |c: f32| {
+                let c = c.clamp(0.0, 1.0);
+                if c <= 0.003_130_8 { 12.92 * c } else { 1.055 * c.powf(1.0 / 2.4) - 0.055 }
+            };
+            return [encode(linear[0]), encode(linear[1]), encode(linear[2]), 1.0];
+        }
+        chroma *= 0.85;
     }
 }
 
@@ -234,10 +359,37 @@ pub const LABEL: Style = Style::semibold(13.0);
 pub const CAPTION: Style = Style::semibold(11.5);
 /// Page and section titles.
 pub const TITLE: Style = Style::semibold(22.0);
+/// What characters say and do, and the user's part of a story: a serif
+/// made for long reading.
+pub const PROSE: Style = Style { font: FontId::SERIF, size: 15.5, line_height: 1.6 };
+/// The title a story opens under, in the prose's serif.
+pub const DISPLAY: Style = Style { font: FontId::SERIF_BOLD, size: 26.0, line_height: 1.25 };
+/// A scene card: where the story is, between the turns.
+pub const SCENE: Style = Style { font: FontId::SERIF_ITALIC, size: 15.0, line_height: 1.55 };
 
 #[cfg(test)]
 mod tests {
-    use super::Scheme;
+    use super::*;
+
+    #[test]
+    fn characters_get_their_own_legible_colour() {
+        for palette in Scheme::ALL.map(Scheme::palette) {
+            let colors: Vec<Color> =
+                ["Katniss", "Peeta", "Haymitch", "Effie", "Rue"].iter().map(|n| character_color(palette, n)).collect();
+            for c in &colors {
+                assert!(c.iter().all(|v| (0.0..=1.0).contains(v)) && (c[3] - 1.0).abs() < f32::EPSILON, "{c:?}");
+                // Light enough on dark schemes, dark enough on light ones.
+                let luma = 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+                assert!(if palette.is_light() { luma < 0.55 } else { luma > 0.5 }, "{luma}");
+            }
+            let apart = |a: &Color, b: &Color| a.iter().zip(b).any(|(x, y)| (x - y).abs() > 0.01);
+            assert!(colors.windows(2).all(|w| apart(&w[0], &w[1])), "different names, different colours");
+            assert_eq!(character_color(palette, "Katniss"), character_color(palette, "katniss!"), "folded");
+        }
+        // Grey has no hue to lose; white stays white.
+        let white = oklch(1.0, 0.0, 0.0);
+        assert!(white[..3].iter().all(|v| (v - 1.0).abs() < 0.01), "{white:?}");
+    }
 
     #[test]
     fn scheme_keys_round_trip() {

@@ -1,16 +1,20 @@
 //! Drop-down menus: model and reasoning (above the composer toolbar),
-//! slash commands (above the composer), ways to add to the cast (below the
-//! cast strip's add button), what to do with a cast member (below its
-//! chip's dots) and with a session (duplicate, export or delete, below its
-//! sidebar row's dots), the background model (from the settings page), on
-//! the library pages the open form's ⋯ (duplicate, export, delete) and the
-//! world a character's Play starts a story in, and the personas to play as
-//! (from the player form, when there are more than its chips show).
+//! slash commands (above the composer), what to do with a cast member
+//! (beside their row's dots in the cast panel) and with a session
+//! (duplicate, export or delete, below its sidebar row's dots), the
+//! background model (from the settings page) and, on the library pages, the
+//! open form's ⋯ (duplicate, export, delete).
+//!
+//! Pickers are menus shown as a sheet over the window, for choosing among
+//! people and worlds by their faces and notes: the library characters to
+//! add to the cast (it stays open to add several; its footer creates or
+//! generates someone instead), the persona to play as, and the world a
+//! character's Play starts a story in.
 //!
 //! Long lists (characters, worlds, personas, models) are searched: typing
-//! while one is open narrows it (names first, then comments and tags), the
-//! arrows move through what is left and Enter picks; Esc clears the search,
-//! then closes.
+//! while one is open narrows it (names first, then comments, tags and
+//! descriptions), the arrows move through what is left and Enter picks; Esc
+//! clears the search, then closes.
 
 use arboard::Clipboard;
 use winit::event::KeyEvent;
@@ -20,17 +24,24 @@ use winit::window::CursorIcon;
 use super::{Chat, Menu, MenuItem, Page, Reasoning, group_digits, price};
 use crate::app::Action;
 use crate::library::{FormAction, Kind, portrait};
-use crate::paint::{Painter, Rect, fade};
+use crate::paint::{Painter, Rect, fade, mix};
 use crate::text::TextLayout;
 use crate::theme;
-use crate::ui::{Ui, edit_key, id};
+use crate::ui::{ButtonStyle, Ui, button, edit_key, id};
 
 /// Height of a menu's row.
 const ROW_H: f32 = 30.0;
 /// Side of a row's portrait.
 const FACE: f32 = 22.0;
+/// Height of a picker's row.
+const PICK_H: f32 = 70.0;
+/// Side of a portrait in a picker.
+const PICK_FACE: f32 = 46.0;
+/// Widest a picker gets.
+const PICKER_W: f32 = 640.0;
 
 /// What an open menu shows.
+#[derive(Default)]
 struct Content {
     /// What it opens next to.
     anchor: Rect,
@@ -42,6 +53,21 @@ struct Content {
     items: Vec<MenuItem>,
     /// Shown while it has no rows.
     empty: String,
+    /// A picker's title and what it is for.
+    title: String,
+    blurb: String,
+    /// A picker's buttons along its foot; the last is the main one.
+    footer: Vec<&'static str>,
+}
+
+/// What was clicked in a picker.
+enum Picked {
+    /// This row (in the rows shown).
+    Row(usize),
+    /// This footer button.
+    Footer(usize),
+    /// Outside it: it closes.
+    Close,
 }
 
 impl Menu {
@@ -49,6 +75,11 @@ impl Menu {
     /// models), searched by typing.
     pub(super) fn searchable(self) -> bool {
         matches!(self, Self::Model | Self::UtilityModel | Self::CastLibrary | Self::PlayIn | Self::Personas)
+    }
+
+    /// Whether it shows as a picker over the window rather than a drop-down.
+    pub(super) fn picker(self) -> bool {
+        matches!(self, Self::CastLibrary | Self::PlayIn | Self::Personas)
     }
 }
 
@@ -88,6 +119,7 @@ impl Chat {
             header: (header.0.to_owned(), header.1.to_owned()),
             items,
             empty: "Loading…".to_owned(),
+            ..Content::default()
         };
         // Some providers list no models: their names are typed.
         let models = |count: usize| match count {
@@ -127,11 +159,22 @@ impl Chat {
                     self.commands().into_iter().map(|c| MenuItem::new(&format!("/{}", c.name()), c.detail())).collect();
                 content(anchors[2], 320.0, false, ("Commands", "Tab to complete"), items)
             }
-            Menu::Cast => content(anchors[3], 240.0, true, ("Add to the cast", ""), Self::cast_menu()),
             Menu::CastLibrary => {
                 let items = self.library_menu();
-                let placeholder = format!("Search {} characters", group_digits(items.len().saturating_sub(1) as u64));
-                content(anchors[3], 320.0, true, (&placeholder, "Click each to add"), items)
+                let placeholder = format!("Search {} characters", group_digits(items.len() as u64));
+                let mut content = content(anchors[3], PICKER_W, true, (&placeholder, ""), items);
+                "Add to the cast".clone_into(&mut content.title);
+                "Each character you pick joins the scene at once; pick as many as you like."
+                    .clone_into(&mut content.blurb);
+                content.empty = if self.library.list(Kind::Character).is_empty() {
+                    "Your library has no characters yet. Create one here, have the AI generate one, or import cards on the \
+                     Characters page."
+                        .to_owned()
+                } else {
+                    "Everyone in your library is in this story.".to_owned()
+                };
+                content.footer = Self::library_menu_footer();
+                content
             }
             Menu::Member(index) => {
                 let title = self.current().cast.get(index).map(|m| m.name.clone()).unwrap_or_default();
@@ -167,17 +210,32 @@ impl Chat {
                 content(self.menu_anchor, 260.0, true, ("Options", ""), items)
             }
             Menu::PlayIn => {
-                // Every world, then a way to make one.
                 let worlds = self.library.list(Kind::World);
                 let placeholder = format!("Search {} worlds", group_digits(worlds.len() as u64));
-                let mut items: Vec<MenuItem> = worlds.iter().map(MenuItem::record).collect();
-                items.push(MenuItem::new("New world…", ""));
-                content(self.menu_anchor, 320.0, true, (&placeholder, "Play in"), items)
+                let items: Vec<MenuItem> = worlds.iter().map(MenuItem::record).collect();
+                let mut content = content(self.menu_anchor, PICKER_W, true, (&placeholder, ""), items);
+                let who = self.library.get(Kind::Character, &self.play_character).map_or("them", |c| c.name.as_str());
+                content.title = format!("Play {who} in…");
+                "The world the story happens in. They start in its first scene.".clone_into(&mut content.blurb);
+                "No worlds yet: make one first.".clone_into(&mut content.empty);
+                content.footer = vec!["New world…", "Cancel"];
+                content
             }
             Menu::Personas => {
-                let items: Vec<MenuItem> = self.persona_choices().into_iter().map(MenuItem::record).collect();
+                let chosen = self.player_choice();
+                let items: Vec<MenuItem> = self
+                    .persona_choices()
+                    .into_iter()
+                    .map(|r| MenuItem { selected: chosen.as_deref() == Some(r.id.as_str()), ..MenuItem::record(r) })
+                    .collect();
                 let placeholder = format!("Search {} personas", group_digits(items.len() as u64));
-                content(self.menu_anchor, 320.0, true, (&placeholder, "Play as"), items)
+                let mut content = content(self.menu_anchor, PICKER_W, true, (&placeholder, ""), items);
+                "Play as".clone_into(&mut content.title);
+                "Your personas. The note under each tells apart those with the same name."
+                    .clone_into(&mut content.blurb);
+                "No personas yet.".clone_into(&mut content.empty);
+                content.footer = vec!["Cancel"];
+                content
             }
             Menu::UtilityModel => {
                 let same =
@@ -209,7 +267,8 @@ impl Chat {
             return;
         };
         // A menu opens with nothing searched.
-        if self.menu_seen != Some(menu) {
+        let fresh = self.menu_seen != Some(menu);
+        if fresh {
             self.menu_seen = Some(menu);
             self.menu_query.take();
             (self.menu_pick, self.menu_keyed) = (0, false);
@@ -220,6 +279,21 @@ impl Chat {
         } else {
             (0..content.items.len()).collect()
         };
+        if menu.picker() {
+            match self.draw_picker(p, ui, &content, &rows, fresh) {
+                Some(Picked::Row(row)) => {
+                    ui.released = false;
+                    self.choose(menu, rows[row], actions);
+                }
+                Some(Picked::Footer(button)) => {
+                    ui.released = false;
+                    self.footer_picked(menu, button);
+                }
+                Some(Picked::Close) => self.close_menu(),
+                None => {}
+            }
+            return;
+        }
         if let Some(row) = self.draw_menu(p, ui, &content, &rows, menu.searchable()) {
             ui.released = false;
             self.choose(menu, rows[row], actions);
@@ -307,7 +381,6 @@ impl Chat {
                     self.run_command(*command, actions);
                 }
             }
-            Menu::Cast => self.cast_menu_picked(index),
             Menu::CastLibrary => self.library_menu_picked(index, actions),
             Menu::Member(member) => self.member_menu_picked(member, index, actions),
             Menu::Session(id) => match index {
@@ -324,9 +397,6 @@ impl Chat {
             Menu::PlayIn => {
                 if let Some(world) = self.library.list(Kind::World).get(index).map(|w| w.id.clone()) {
                     self.play_character_in(world, actions);
-                } else {
-                    self.show(Page::Library(Kind::World));
-                    self.library.new_form(Kind::World);
                 }
             }
             Menu::Personas => self.play_as(index),
@@ -339,6 +409,182 @@ impl Chat {
                 actions.push(Action::SetUtilityModel(model));
             }
         }
+    }
+
+    /// Applies footer button `button` of the picker `menu`.
+    fn footer_picked(&mut self, menu: Menu, button: usize) {
+        match menu {
+            Menu::CastLibrary => self.library_footer_picked(button),
+            Menu::PlayIn if button == 0 => {
+                self.menu = None;
+                self.show(Page::Library(Kind::World));
+                self.library.new_form(Kind::World);
+            }
+            _ => self.close_menu(),
+        }
+    }
+
+    /// Draws `content` as a picker over the whole window, `rows` of its
+    /// items under a search field: each a face, a name, the note telling it
+    /// apart and what it is about. A click outside it closes it, unless it
+    /// opened (`fresh`) with that click.
+    fn draw_picker(
+        &mut self,
+        p: &mut Painter,
+        ui: &mut Ui,
+        content: &Content,
+        rows: &[usize],
+        fresh: bool,
+    ) -> Option<Picked> {
+        let t = p.theme;
+        let view = p.clip();
+        // Everything beneath is covered: nothing there reacts.
+        self.menu_rect = Some(view);
+        p.rect(view, fade(t.scrim, 0.7), 0.0);
+        let width = content.width.min(view.w - 48.0);
+        let height = (view.h - 96.0).clamp(320.0, 720.0);
+        let card = Rect::new(
+            view.x + ((view.w - width) * 0.5).round(),
+            view.y + ((view.h - height) * 0.42).round().max(24.0),
+            width,
+            height,
+        );
+        p.shadow(Rect::new(card.x, card.y + 12.0, card.w, card.h), t.shadow, theme::RADIUS + 4.0, 32.0);
+        p.bordered(card, t.panel, theme::RADIUS + 4.0, 1.0, t.border_strong);
+
+        // Title, what it is for, and the search.
+        let (x, inner) = (card.x + 24.0, card.w - 48.0);
+        let mut y = card.y + 22.0;
+        let mut title = p.layout(&content.title, theme::TITLE, None);
+        title.truncate(p.fonts, inner);
+        p.text(&title, x, y, t.text);
+        y += title.height() + 4.0;
+        let blurb = p.layout(&content.blurb, theme::SMALL, Some(inner));
+        p.text(&blurb, x, y, t.text_muted);
+        y += blurb.height() + 16.0;
+        let field = Rect::new(x, y, inner, 40.0);
+        p.bordered(field, t.surface, theme::RADIUS, 1.0, t.border_focus);
+        let query = self.menu_query.text();
+        let count = if query.is_empty() {
+            String::new()
+        } else {
+            format!("{} of {}", group_digits(rows.len() as u64), group_digits(content.items.len() as u64))
+        };
+        let count = p.layout(&count, theme::SMALL, None);
+        p.text(&count, field.right() - 12.0 - count.width(), field.y + (field.h - count.height()) * 0.5, t.text_faint);
+        let field_w = field.w - 36.0 - count.width();
+        let (text, color) = if query.is_empty() { (content.header.0.as_str(), t.text_faint) } else { (query, t.text) };
+        let mut layout = p.layout(text, theme::BODY, None);
+        let caret_x = if query.is_empty() { 0.0 } else { layout.caret(self.menu_query.cursor()).0 };
+        layout.truncate(p.fonts, field_w);
+        let origin = (field.x + 12.0, field.y + (field.h - layout.height()) * 0.5);
+        p.text(&layout, origin.0, origin.1, color);
+        if ui.caret_visible() && caret_x <= field_w {
+            let caret = Rect::new(origin.0 + caret_x - 1.0, origin.1 + 2.0, 2.0, layout.line_height() - 4.0);
+            p.rect(caret, t.accent, 0.0);
+        }
+        y = field.bottom() + 12.0;
+
+        // The footer's buttons, right to left, the main one last.
+        let footer_y = card.bottom() - 60.0;
+        p.rect(Rect::new(card.x, footer_y, card.w, 1.0), t.border, 0.0);
+        let mut picked = None;
+        let mut right = card.right() - 24.0;
+        for (k, label) in content.footer.iter().enumerate().rev() {
+            let main = k + 1 == content.footer.len();
+            let button_w = (p.layout(label, theme::LABEL, None).width() + 28.0).max(if main { 96.0 } else { 0.0 });
+            right -= button_w;
+            let style = if main { ButtonStyle::Primary } else { ButtonStyle::Ghost };
+            if button(p, ui, Rect::new(right, footer_y + 13.0, button_w, 34.0), label, style, true) {
+                picked = Some(Picked::Footer(k));
+            }
+            right -= 8.0;
+        }
+        let shortcut = p.layout("↑↓ to move, Enter to pick, Esc to close", theme::TINY, None);
+        if shortcut.width() < right - x {
+            p.text(&shortcut, x, footer_y + 30.0 - shortcut.height() * 0.5, t.text_faint);
+        }
+
+        // The rows, scrolled.
+        let list = Rect::new(card.x + 12.0, y, card.w - 24.0, footer_y - 8.0 - y);
+        if rows.is_empty() {
+            let empty = if content.items.is_empty() { content.empty.as_str() } else { "Nothing matches." };
+            let text = p.layout(empty, theme::SMALL, Some(inner));
+            p.text(&text, x, list.y + 12.0, t.text_muted);
+        }
+        let content_h = rows.len() as f32 * PICK_H;
+        if ui.hovered(list) {
+            self.menu_scroll += ui.scroll;
+            ui.scroll = 0.0;
+        }
+        if std::mem::take(&mut self.menu_follow) {
+            let top = self.menu_pick as f32 * PICK_H;
+            self.menu_scroll = self.menu_scroll.min(top).max(top + PICK_H - list.h);
+        }
+        self.menu_scroll = self.menu_scroll.clamp(0.0, (content_h - list.h).max(0.0));
+        let clip = p.push_clip(list);
+        for (i, &index) in rows.iter().enumerate() {
+            let row = Rect::new(list.x, list.y + i as f32 * PICK_H - self.menu_scroll, list.w, PICK_H - 4.0);
+            if row.bottom() < list.y || row.y > list.bottom() {
+                continue;
+            }
+            let item = &content.items[index];
+            let hovered = ui.hovered(row) && list.contains(ui.mouse);
+            let keyed = self.menu_keyed && i == self.menu_pick;
+            let hover = ui.anim(
+                id(("picker", &content.title, &item.image, &item.label, i)),
+                f32::from(u8::from(hovered || keyed)),
+            );
+            p.rect(row, fade(t.hover, hover), theme::RADIUS);
+            if item.selected {
+                p.bordered(row, fade(t.accent, 0.08), theme::RADIUS, 1.0, fade(t.accent, 0.6));
+            }
+            let face = Rect::new(row.x + 12.0, row.y + (row.h - PICK_FACE) * 0.5, PICK_FACE, PICK_FACE);
+            portrait(p, self.library.portrait_path(&item.image).as_deref(), &item.label, face, PICK_FACE * 0.5);
+            let ink = theme::character_color(&t, &item.label);
+            let ring = Rect::new(face.x - 3.0, face.y - 3.0, face.w + 6.0, face.h + 6.0);
+            p.bordered(ring, [0.0; 4], ring.w * 0.5, 1.5, fade(ink, 0.35 + 0.5 * hover));
+
+            // Name (starred favourites), the note telling it apart, what it is about.
+            let text_x = face.right() + 16.0;
+            let right = row.right() - if item.selected { 40.0 } else { 14.0 };
+            let width = (right - text_x).max(24.0);
+            let mut name = p.layout(&item.label, theme::LABEL, None);
+            name.truncate(p.fonts, width - if item.favorite { 20.0 } else { 0.0 });
+            let mut note = p.layout(&item.detail, theme::SMALL, None);
+            note.truncate(p.fonts, width);
+            let mut about = p.layout(&item.summary, theme::TINY, None);
+            about.truncate(p.fonts, width);
+            let lines = [(&name, 0.0), (&note, 1.0), (&about, 1.0)];
+            let block: f32 = lines.iter().filter(|(l, _)| l.width() > 0.0).map(|(l, gap)| l.height() + gap).sum();
+            let mut line_y = row.y + ((row.h - block) * 0.5).round();
+            p.text(&name, text_x, line_y, t.text);
+            if item.favorite {
+                p.label("★", theme::SMALL, text_x + name.width() + 6.0, line_y - 1.0, t.accent);
+            }
+            line_y += name.height();
+            if note.width() > 0.0 {
+                p.text(&note, text_x, line_y + 1.0, mix(t.text_muted, t.text, hover * 0.4));
+                line_y += note.height() + 1.0;
+            }
+            if about.width() > 0.0 {
+                p.text(&about, text_x, line_y + 1.0, t.text_faint);
+            }
+            if item.selected {
+                p.label_centered("✓", theme::LABEL, Rect::new(row.right() - 36.0, row.y, 24.0, row.h), t.accent);
+            }
+            if hovered {
+                ui.cursor = CursorIcon::Pointer;
+                if ui.clicked(row) {
+                    picked = Some(Picked::Row(i));
+                }
+            }
+        }
+        p.set_clip(clip);
+        if picked.is_none() && !fresh && ui.released && !card.contains(ui.press_pos) && !card.contains(ui.mouse) {
+            picked = Some(Picked::Close);
+        }
+        picked
     }
 
     /// Draws `content` as a menu next to its anchor (below it, or above),
@@ -357,10 +603,18 @@ impl Chat {
         let content_h = rows.len().max(1) as f32 * ROW_H;
         let view_h = p.clip().bottom();
         let anchor = content.anchor;
-        // Scrolls when the window is too short for every row.
-        let room = if content.below { view_h - anchor.bottom() - 16.0 } else { anchor.y - 16.0 };
-        let height = (header_h + content_h + 2.0 * pad).min(room.max(header_h + ROW_H * 3.0));
-        let y = if content.below { anchor.bottom() + 6.0 } else { anchor.y - 6.0 - height };
+        // It opens on the side asked for unless the other has more room for
+        // it, and scrolls when the window is too short for every row.
+        let needed = header_h + content_h + 2.0 * pad;
+        let (room_below, room_above) = (view_h - anchor.bottom() - 16.0, anchor.y - 16.0);
+        let below = if content.below {
+            room_below >= needed || room_below >= room_above
+        } else {
+            room_above < needed && room_below > room_above
+        };
+        let room = if below { room_below } else { room_above };
+        let height = needed.min(room.max(header_h + ROW_H * 3.0));
+        let y = if below { anchor.bottom() + 6.0 } else { anchor.y - 6.0 - height };
         // Kept inside the window when the anchor sits near its right edge.
         let x = anchor.x.min(p.clip().right() - content.width - 8.0).max(8.0);
         let area = Rect::new(x, y, content.width, height);
@@ -502,6 +756,37 @@ mod tests {
         chat.choose(Menu::Model, rows[0], &mut actions);
         assert_eq!(chat.model, "inworld-llm");
         assert!(matches!(actions.as_slice(), [Action::SelectModel(m)] if m == "inworld-llm"));
+    }
+
+    #[test]
+    fn pickers_tell_apart_namesakes_and_their_footers_act() {
+        let persona = |id: &str, comment: &str, favorite: bool| openrp_core::Persona {
+            id: id.into(),
+            name: "Gale".into(),
+            description: format!("Gale, {comment}.\nMore."),
+            comment: comment.into(),
+            favorite,
+            ..Default::default()
+        };
+        let mut chat = Chat::new(None, Reasoning::Auto, Vec::new());
+        let personas = vec![persona("a", "the hunter", false), persona("b", "the miner", true)];
+        chat.library_loaded(Vec::new(), Vec::new(), personas, openrp_core::Portraits::at("p".into()));
+        chat.play("w".into());
+        chat.sync_character_form();
+        let content = chat.menu_content(Menu::Personas, [Rect::default(); 4]);
+        let shown: Vec<(&str, &str, bool)> =
+            content.items.iter().map(|i| (i.detail.as_str(), i.summary.as_str(), i.selected)).collect();
+        assert_eq!(
+            shown,
+            [("the miner", "Gale, the miner.", true), ("the hunter", "Gale, the hunter.", false)],
+            "starred first, filled in and ticked; each with its note and what it is about"
+        );
+        assert_eq!(search(&content.items, "hunter"), [1], "notes are searched");
+
+        // A world is made from Play's picker.
+        chat.menu = Some(Menu::PlayIn);
+        chat.footer_picked(Menu::PlayIn, 0);
+        assert!(chat.menu.is_none() && chat.page == Page::Library(Kind::World));
     }
 
     #[test]

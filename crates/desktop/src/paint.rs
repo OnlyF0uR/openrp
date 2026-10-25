@@ -148,6 +148,27 @@ impl<'a> Painter<'a> {
         lookup
     }
 
+    /// Draws the image at `path` as a soft wash over `rect`: a thumbnail a
+    /// few pixels across, stretched so the GPU's filtering blurs it, faded
+    /// to `alpha`. One quad, so a backdrop costs nothing per frame.
+    pub fn backdrop(&mut self, path: &str, rect: Rect, alpha: f32) -> Lookup {
+        const SIDE: f32 = 24.0;
+        let (w, h) = if rect.w >= rect.h {
+            (SIDE, (SIDE * rect.h / rect.w).max(2.0))
+        } else {
+            ((SIDE * rect.w / rect.h).max(2.0), SIDE)
+        };
+        let key = ImageKey { path: path.to_owned(), w: w.round() as u32, h: h.round() as u32 };
+        let lookup = self.images.lookup(&key);
+        if let Lookup::Ready(uv) = lookup {
+            // Inset half a texel, so filtering never reaches the atlas's
+            // neighbouring images.
+            let uv = [uv[0] + 0.5, uv[1] + 0.5, uv[2] - 1.0, uv[3] - 1.0];
+            self.push(rect, [1.0, 1.0, 1.0, alpha], [1.0; 4], [0.0, 0.0, 0.0, KIND_IMAGE], uv);
+        }
+        lookup
+    }
+
     /// Restricts subsequent drawing to `rect` (intersected with the current
     /// clip) and returns the previous clip for [`Painter::set_clip`].
     pub fn push_clip(&mut self, rect: Rect) -> Rect {
