@@ -21,7 +21,7 @@ See `README.md` for features, the crate layout and the architecture.
 - **Military-grade code quality, properly documented.** Every public item has doc comments, `clippy::pedantic` stays clean (`cargo clippy --workspace --all-targets`), and there are no `unwrap`s on fallible runtime paths. Non-trivial logic gets a small unit test. Parsers must survive hostile input (bounded recursion, no slicing off char boundaries).
 - **Secrets:** never log the token. Write config files atomically, with `0600` permissions on Unix.
 - **Safety:** links from replies only open `http(s)`/`mailto`.
-- **Testing:** the owner tests the GUI themselves. Don't drive the app with computer use; `cargo build`, `clippy` and `test` are enough. CI (`.github/workflows/ci.yml`) runs `cargo fmt --check` (`rustfmt.toml`), clippy with `-D warnings` and the tests on Windows, macOS and Linux; a `v*` tag publishes release binaries.
+- **Testing:** the owner tests the GUI themselves. Don't drive the app with computer use; `cargo build`, `clippy` and `test` are enough. CI (`.github/workflows/ci.yml`) runs `cargo fmt --check` (`rustfmt.toml`), clippy with `-D warnings` and the tests on Windows, macOS and Linux for pushes to `main` (not pull requests); a `v*` tag publishes release binaries.
 
 ## Conventions
 

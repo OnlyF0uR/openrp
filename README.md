@@ -230,8 +230,8 @@ writer thread, in order, which finishes its queue before the app exits; the exce
 portraits copied in (picked, or from an imported card) under fresh names, and exports, which
 the worker that asked where writes there.
 
-CI (`.github/workflows/ci.yml`) runs clippy and the tests on Windows, macOS and Linux. Pushing
-a `v*` tag attaches release builds to a GitHub release: `openrp.exe` (icon embedded), `OpenRP.app`
+CI (`.github/workflows/ci.yml`) runs clippy and the tests on Windows, macOS and Linux for every
+push to `main` (not for pull requests). Pushing a `v*` tag attaches release builds to a GitHub release: `openrp.exe` (icon embedded), `OpenRP.app`
 for macOS, and for Linux the binary with `openrp.desktop`, its icon and `install.sh` (installs
 all three for the current user). The packaging files are in `packaging/`.
 
