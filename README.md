@@ -19,8 +19,9 @@ cargo clippy --workspace --all-targets
   code blocks with syntax highlighting and a copy button. Code never wraps: wide blocks
   scroll sideways (trackpad, Shift+wheel, or the scrollbar). Text can be selected across
   messages (drag, double-click for a word, triple-click for a paragraph) and copied.
-- **Worlds and characters**: the sidebar's Worlds and Characters pages list everything saved,
-  starred ones first, then newest. A world is a setting to play in (Panem, a galaxy far away);
+- **Worlds and characters**: the sidebar's Worlds and Characters pages show everything saved
+  as a grid of picture cards (portraits stand tall, worlds lie wide), each with its name and
+  comment over its foot and its first tag, starred ones first, then newest. A world is a setting to play in (Panem, a galaxy far away);
   a character is someone the AI plays, kept in one library to cast in any story. Each has a
   name, tags, a description and an optional portrait (PNG or JPEG), created and edited in a
   form (Ctrl/Cmd+S saves, Esc goes back), and a **comment** only you see (which version of a
@@ -42,10 +43,11 @@ cargo clippy --workspace --all-targets
   where it matters, or always, when marked **Always**. A SillyTavern lorebook (world info) or a
   card's book can be imported into it.
 - **Personas**: the Personas page keeps who you play (name, description, portrait, tags), like
-  the other two pages. When a story asks who you are, your personas are chips to pick with a
-  click, the starred one already filled in; what you type there can be kept with **Save as
-  persona** (or **Update persona**, for one of that name). Your portrait shows in the **You**
-  chip.
+  the other two pages. When a story asks who you are, your personas are cards to pick with a
+  click, each showing its comment (or the start of its description), so several of the same
+  name are told apart; the starred one is already filled in, and **All N personas…** opens the
+  rest in a picker. What you type there can be kept with **Save as persona** (or **Update
+  persona**, for one of that name). Your portrait shows under **You** in the cast panel.
 - **Character cards**: **Import** on the Characters page reads the cards SillyTavern, Character
   Hub and most roleplay apps share (PNG with the card inside, or JSON; V1, V2 and V3), several
   at once. The image becomes the portrait; personality and scenario join the description; the
@@ -55,21 +57,33 @@ cargo clippy --workspace --all-targets
   there is no portrait.
 - **Stories**: Clicking a world (**Edit** opens its form) (Ctrl/Cmd+N opens the worlds) starts a session in it, which
   first asks who you play: your character's name, description and portrait, or one of your
-  personas (the **You** chip edits them later). **Begin** saves the story and lists it in the sidebar. The strip under the header
-  shows the current scene (click it to change it yourself) and holds the story's cast: **+ Add** brings in characters from the
-  library (the story keeps its own copy, so editing or deleting them in the library changes no
-  story), creates one, or has the AI generate one for you to review. Click a member to move
-  them in or out of the scene; its ⋯ menu edits or deletes them. Deleting a world deletes its
-  stories: its Delete asks again and says how many.
+  personas (**You** in the cast panel edits them later). **Begin** saves the story and lists it
+  in the sidebar. The **cast panel** beside the story (over it, in a narrow window; the header's
+  **Cast** button, with the faces of who is in the scene, shows and hides it) holds what the
+  story is made of: the world's picture, the current scene (click it to change it yourself),
+  **Memories** and the **Author's note**, who you play, and the cast, in the scene and
+  elsewhere, each with a portrait and the first line of their description. Click a member to
+  move them into the scene or out of it; their ⋯ menu edits, stores or deletes them. **+ Add characters** opens a picker of your library (the story keeps its own
+  copy, so editing or deleting them in the library changes no story): every click adds one and
+  it stays open for more, and its foot creates someone or has the AI generate one for you to
+  review. Deleting a world deletes its stories: its Delete asks again and says how many.
 - **No narrator**: the story is told only through its characters. Every reply must call a tool
   (the request sets `tool_choice: required`), and text written outside tool calls is dropped:
   there is no narration. `speak` holds the whole turn in one call, as one message per
   responding character: what they do (action) and what they say (text, with short actions in
   *asterisks*), so several characters can answer and react to each other. Each character gets
   one bubble per reply, with their portrait and name, their actions muted and their words in
-  full colour; if a model gives someone two messages, they are merged and the model is told.
-  Bubbles appear as they are written; a scene change, arrival or departure shows as a small
-  note between them. Newcomers come in only when your message
+  full colour, in a serif made for reading (Literata); if a model gives someone two messages,
+  they are merged and the model is told. Every character has a colour of their own: their name,
+  portrait ring and bubble wear it, so a busy scene reads at a glance. It is picked from their
+  name until you choose one: **Colour** beside the name in a character's or persona's form (and
+  in a cast member's or your character's dialog) opens a picker with presets, a shade square,
+  a hue strip and a hex field; **Auto** goes back to the name's. A colour too dark or too light
+  to read on the scheme is shown lighter or deeper. Characters cast into a story, stored back
+  into the library or played as a persona keep their colour. Your messages show as your
+  character's bubble too. Bubbles fade in as they are written, and the
+  portrait of whoever is speaking glows; a scene change shows as a centred scene card, and an
+  arrival or departure as a small note between them. Newcomers come in only when your message
   refers to someone not cast yet, or when nobody is in the scene (then the one character the
   moment needs); they are introduced in the same `speak` call, each with a description. Every
   character is one person with a personal name ("Bram Holloway", never "Bartender" or "Guard
@@ -114,11 +128,11 @@ cargo clippy --workspace --all-targets
   you plainly; some models (and some with reasoning on) don't follow the story's tools. A reply
   that stops early (an error, Esc or closing the app) shows a **Continue** button. Replies keep
   streaming in chats you switch away from.
-- **Searchable pickers**: the lists that can grow long (characters to add to a story, the world
-  a character's Play starts in, your personas, the models) have a search at the top: type to
-  narrow them by name, then comment and tags; the arrows and Enter pick. People and worlds
-  show their portrait, and their comment (or tags) on the right, to tell look-alikes apart.
-  The player form shows six personas as chips; the rest are one search away.
+- **Searchable pickers**: the lists that can grow long have a search at the top: type to
+  narrow them by name, then comment, tags and description; the arrows and Enter pick. Choosing
+  people and worlds (characters to add to a story, the world a character's Play starts in, your
+  personas) opens a picker over the window: each row a portrait, a name, the comment (or tags)
+  that tells look-alikes apart and the start of the description. Models stay a drop-down.
 - **Spotlight** (Ctrl/Cmd+K): one search over commands, stories, worlds, characters, personas, models,
   themes and the full text of every saved message. A story also matches the name of its world,
   so typing a world lists the stories played in it; a world opens its page or starts a story
@@ -126,14 +140,14 @@ cargo clippy --workspace --all-targets
   too (shown beside their name), and by description.
 - **Memories**: the AI keeps what the story must not forget (promises, secrets, injuries,
   changed relationships) with a `remember` tool, shown as a small note in the reply. They are
-  sent with every request, so they survive summarising; **Memory** beside the scene lists
+  sent with every request, so they survive summarising; **Memories** in the cast panel lists
   them in a dialog where each can be edited or removed (×), and new ones added (Enter or
   **+ Add memory**). Regenerating or deleting the reply that remembered something forgets it
   again. Every 8 prompts a separate request reads the turns since the last time and adds what
   the story must not forget (Memory shows "…" while it works; it is billed with the next
   reply). One that fails or takes over three minutes leaves its turns for the next review.
   `/memorize` runs it at once.
-- **Author's note and OOC**: **Note** beside the scene holds your guidance for the whole story
+- **Author's note and OOC**: **Author's note** in the cast panel holds your guidance for the whole story
   (tone, pacing, limits), sent last in every request. For one reply only, end a message with a
   line starting `/ooc` (or send just `/ooc …` to nudge the story): the model is told it is your
   instruction, not your character speaking, and it shows muted under your message. Your own
@@ -153,7 +167,8 @@ cargo clippy --workspace --all-targets
   `/clear`, which deletes the open story and starts it over in the same world, cast and note.
 - **Emoji and CJK**: colour emoji (Twemoji), and Chinese, Japanese and Korean text through the
   operating system's fonts, with input-method (IME) support for typing them.
-- **Settings**, in tabs: Appearance (Dark, One Dark and Light schemes, reasoning display),
+- **Settings**, in tabs: Appearance (Dark, Ember, One Dark, Light and Parchment schemes,
+  reasoning display),
   Models (a **background model** for memory reviews, summaries and generated characters: a
   cheaper one saves money, and summaries stay on the story's model when it holds less
   context), Usage totals, and Provider (edit the base URL and key, or forget the key; the data
@@ -193,12 +208,13 @@ cargo clippy --workspace --all-targets
 - `markdown.rs` → `doc.rs`: a streaming-friendly Markdown parser, and laid-out documents with
   selection, links and incremental rebuilds while a reply streams. `highlight.rs` colours code.
 - `paint.rs`, `ui.rs`, `editor.rs`: drawing API, widgets and input state, text editing.
+  `color.rs`: the colour picker.
 - `chat/`: the main screen (sidebar, composer, messages, menus); `chat/stream.rs` streams
   replies, retries failed requests and compacts long conversations.
 - `spotlight.rs`, `settings.rs`, `login.rs`: the other surfaces.
-- `library.rs`: the Worlds, Characters and Personas pages (filter, tags, favourites, card import), their
+- `library.rs`: the Worlds, Characters and Personas pages (a grid of picture cards; filter, tags, favourites, card import), their
   form with its sections (greetings, example dialogue, lore) and portraits.
-- `chat/cast.rs`: Play, the cast strip and the story's system prompt and state (built in
+- `chat/cast.rs`: Play, the cast panel and the story's system prompt and state (built in
   `chat/stream.rs`); `chat/dialog.rs`: the form asking who you play, and the dialogs for cast
   members, the scene, the author's note and memories; `chat/tools.rs`: the `speak`,
   `create_character`, `update_character` and `remember` tools, how they show, and parsing
@@ -219,8 +235,8 @@ writer thread, in order, which finishes its queue before the app exits; the exce
 portraits copied in (picked, or from an imported card) under fresh names, and exports, which
 the worker that asked where writes there.
 
-CI (`.github/workflows/ci.yml`) runs clippy and the tests on Windows, macOS and Linux. Pushing
-a `v*` tag attaches release builds to a GitHub release: `openrp.exe` (icon embedded), `OpenRP.app`
+CI (`.github/workflows/ci.yml`) runs clippy and the tests on Windows, macOS and Linux for every
+push to `main` (not for pull requests). Pushing a `v*` tag attaches release builds to a GitHub release: `openrp.exe` (icon embedded), `OpenRP.app`
 for macOS, and for Linux the binary with `openrp.desktop`, its icon and `install.sh` (installs
 all three for the current user). The packaging files are in `packaging/`.
 
@@ -282,6 +298,8 @@ The bundled fonts keep their own licenses, below.
 ## Fonts
 
 - Inter, © The Inter Project Authors, SIL Open Font License (`assets/Inter-LICENSE.txt`).
+- Literata, © The Literata Project Authors, SIL Open Font License
+  (`assets/Literata-LICENSE.txt`).
 - JetBrains Mono, © The JetBrains Mono Project Authors, SIL Open Font License
   (`assets/JetBrainsMono-LICENSE.txt`).
 - Twemoji Mozilla: code Apache 2.0, graphics © Twitter, Inc. and other contributors, CC-BY 4.0

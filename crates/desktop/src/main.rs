@@ -11,6 +11,7 @@
 mod app;
 mod atlas;
 mod chat;
+mod color;
 mod doc;
 mod editor;
 mod font;

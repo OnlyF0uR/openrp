@@ -242,10 +242,12 @@ impl TextLayout {
     ) -> Self {
         let primary = fonts.face(base.font);
         let px = base.size * scale;
-        let (ascent, descent) = primary.vertical_metrics();
-        let (ascent, descent) = (ascent / primary.units_per_em() * px, descent / primary.units_per_em() * px);
+        let cap = primary.cap_height() / primary.units_per_em() * px;
         let line_height = (base.size * base.line_height * scale).round();
-        let baseline = ((line_height - (ascent - descent)) * 0.5 + ascent).round();
+        // Capitals sit in the middle of the line. Centring the ascender and
+        // descender instead sets a serif low (Literata's ascender is far
+        // taller); for Inter both put the baseline in the same place.
+        let baseline = f32::midpoint(line_height, cap).round();
 
         let mut runs = Vec::with_capacity(spans.len() + 1);
         runs.push(Run::plain(base.font));
@@ -690,6 +692,29 @@ impl TextLayout {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn capitals_sit_in_the_middle_of_their_line() {
+        let fonts = Fonts::load();
+        let mut atlas = GlyphAtlas::default();
+        let styles = [
+            crate::theme::BODY,
+            crate::theme::LABEL,
+            crate::theme::PROSE,
+            crate::theme::DISPLAY,
+            Style { font: FontId::SERIF_BOLD, ..Style::semibold(100.0) },
+        ];
+        for style in styles {
+            // `H` has flat tops and feet: its ink spans exactly the capitals.
+            let line = TextLayout::new(&fonts, "H", style, None, 1.0);
+            let mut ink = (f32::MAX, f32::MIN);
+            assert!(line.place(&fonts, &mut atlas, (0.0, 0.0), (Align::Left, 0.0), [0.0, 0.0, 500.0, 500.0], |g| {
+                ink = (ink.0.min(g.rect[1]), ink.1.max(g.rect[1] + g.rect[3]));
+            }));
+            let off = f32::midpoint(ink.0, ink.1) - line.height() * 0.5;
+            assert!(off.abs() <= 1.0, "{style:?}: capitals {off} px from the middle");
+        }
+    }
 
     fn layout(text: &str, width: Option<f32>) -> TextLayout {
         TextLayout::new(&Fonts::load(), text, Style::regular(16.0), width, 1.0)

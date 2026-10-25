@@ -168,6 +168,8 @@ struct Builder<'a> {
     codes: usize,
     /// Ink of emphasised (italic) text.
     emphasis_ink: u8,
+    /// Paragraphs' style: the UI's sans-serif, or a story's serif.
+    body: Style,
 }
 
 impl Doc {
@@ -197,27 +199,29 @@ impl Doc {
     /// `base_ink` colours plain text (e.g. [`INK_MUTED`] for reasoning).
     #[must_use]
     pub fn markdown(fonts: &Fonts, src: &str, width: f32, scale: f32, base_ink: u8, previous: Option<Self>) -> Self {
-        Self::build(fonts, src, (width, scale), (base_ink, base_ink), previous)
+        Self::build(fonts, src, (width, scale), (base_ink, base_ink), theme::BODY, previous)
     }
 
-    /// Lays out a character's speech (Markdown) at `width`: their words in
-    /// the text colour, their actions (italics) muted.
+    /// Lays out a character's speech (Markdown) at `width` in the story's
+    /// serif: their words in the text colour, their actions (italics) muted.
     #[must_use]
     pub fn speech(fonts: &Fonts, src: &str, width: f32, scale: f32, previous: Option<Self>) -> Self {
-        Self::build(fonts, src, (width, scale), (INK_TEXT, INK_MUTED), previous)
+        Self::build(fonts, src, (width, scale), (INK_TEXT, INK_MUTED), theme::PROSE, previous)
     }
 
-    /// [`Doc::markdown`] with `inks` for plain and emphasised text.
+    /// [`Doc::markdown`] with `inks` for plain and emphasised text, and
+    /// paragraphs in `body`.
     fn build(
         fonts: &Fonts,
         src: &str,
         (width, scale): (f32, f32),
         (base_ink, emphasis_ink): (u8, u8),
+        body: Style,
         mut previous: Option<Self>,
     ) -> Self {
         let blocks = markdown::parse(src);
         let key = (width.to_bits(), scale.to_bits());
-        let mut b = Builder { fonts, scale, texts: Vec::new(), decos: Vec::new(), codes: 0, emphasis_ink };
+        let mut b = Builder { fonts, scale, texts: Vec::new(), decos: Vec::new(), codes: 0, emphasis_ink, body };
         let mut block_ends = Vec::with_capacity(blocks.len());
         let mut y = 0.0;
         let mut reused = 0;
@@ -464,14 +468,16 @@ impl Builder<'_> {
                 spans.push((range, base));
             }
         };
+        // A story's serif has its own italic and bold.
+        let serif = matches!(style.font, FontId::SERIF | FontId::SERIF_BOLD);
         for (range, mark) in &inline.spans {
             plain(&mut spans, at..range.start);
             let font = if mark.code {
                 FontId::MONO
-            } else if mark.strong || style.font == FontId::SEMIBOLD {
-                FontId::SEMIBOLD
+            } else if mark.strong || style.font == FontId::SEMIBOLD || style.font == FontId::SERIF_BOLD {
+                if serif { FontId::SERIF_BOLD } else { FontId::SEMIBOLD }
             } else if mark.emphasis {
-                FontId::ITALIC
+                if serif { FontId::SERIF_ITALIC } else { FontId::ITALIC }
             } else {
                 style.font
             };
@@ -520,7 +526,7 @@ impl Builder<'_> {
     fn block(&mut self, block: &Block, x: f32, y: f32, width: f32, ink: u8, sep: &'static str) -> f32 {
         match block {
             Block::Paragraph(inline) => {
-                let layout = self.inline(inline, theme::BODY, width, ink);
+                let layout = self.inline(inline, self.body, width, ink);
                 self.text(x, y, layout, inline, sep)
             }
             Block::Heading { level, text } => {
@@ -532,7 +538,8 @@ impl Builder<'_> {
                 };
                 // Headings get extra air above, unless they open the document.
                 let above = if y > 0.0 { 6.0 } else { 0.0 };
-                let layout = self.inline(text, Style::semibold(size), width, ink);
+                let font = if self.body.font == FontId::SERIF { FontId::SERIF_BOLD } else { FontId::SEMIBOLD };
+                let layout = self.inline(text, Style { font, ..Style::semibold(size) }, width, ink);
                 above + self.text(x, y + above, layout, text, sep)
             }
             Block::Code { lang, code } => {
@@ -597,7 +604,7 @@ impl Builder<'_> {
                             let marker = TextLayout::new(
                                 self.fonts,
                                 &format!("{}.", first + n as u64),
-                                theme::BODY,
+                                self.body,
                                 None,
                                 self.scale,
                             );
@@ -605,7 +612,7 @@ impl Builder<'_> {
                             self.decos.push(DecoPiece { x: mx, y: item_y, deco: Deco::Marker(marker) });
                         }
                         (None, None) => {
-                            let marker = TextLayout::new(self.fonts, "•", theme::BODY, None, self.scale);
+                            let marker = TextLayout::new(self.fonts, "•", self.body, None, self.scale);
                             self.decos.push(DecoPiece { x: x + 7.0, y: item_y, deco: Deco::Marker(marker) });
                         }
                     }

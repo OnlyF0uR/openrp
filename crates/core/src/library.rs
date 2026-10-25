@@ -90,6 +90,10 @@ pub struct Character {
     /// it is): never sent to the model, nor written into an exported card.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub comment: String,
+    /// Their colour in the app (name, portrait ring, bubble) as `#rrggbb`;
+    /// empty for one picked from their name.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub color: String,
     /// What they say to open a story they are cast in: the first, or
     /// another swiped to. `{{user}}` and `{{char}}` stand for the user's
     /// character and theirs.
@@ -132,6 +136,10 @@ pub struct Persona {
     /// it is): never sent to the model, nor written into an exported card.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub comment: String,
+    /// Their colour in the app (name, portrait ring, bubble) as `#rrggbb`;
+    /// empty for one picked from their name.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub color: String,
     /// Labels to find them by, as the user typed them.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub tags: Vec<String>,

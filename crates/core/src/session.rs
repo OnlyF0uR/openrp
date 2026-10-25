@@ -100,6 +100,10 @@ pub struct CastMember {
     /// Portrait file name in [`Portraits`](crate::Portraits); empty for none.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub portrait: String,
+    /// Their colour in the app (name, portrait ring, bubble) as `#rrggbb`;
+    /// empty for one picked from their name.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub color: String,
     /// Example dialogue showing how they talk, from their library character.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub examples: String,
@@ -126,6 +130,10 @@ pub struct Player {
     /// Portrait file name in [`Portraits`](crate::Portraits); empty for none.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub portrait: String,
+    /// Their colour in the app (name, portrait ring, bubble) as `#rrggbb`;
+    /// empty for one picked from their name.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub color: String,
 }
 
 /// Renames someone known by `name` (and `aliases`) to `new_name`, keeping

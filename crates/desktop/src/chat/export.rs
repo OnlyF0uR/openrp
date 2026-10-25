@@ -40,7 +40,7 @@ fn lines(session: &Session, player: &str) -> Vec<Line> {
         for part in parts {
             lines.push(match part {
                 Part::Said { character, text } => Line::Said(character, false, text),
-                Part::Note(note) => Line::Note(note),
+                Part::Scene(note) | Part::Note(note) => Line::Note(note),
             });
         }
     }
