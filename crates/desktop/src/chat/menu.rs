@@ -442,7 +442,8 @@ impl Chat {
         self.menu_rect = Some(view);
         p.rect(view, fade(t.scrim, 0.7), 0.0);
         let width = content.width.min(view.w - 48.0);
-        let height = (view.h - 96.0).clamp(320.0, 720.0);
+        // Within the window at any zoom: its list takes what is left.
+        let height = (view.h - 48.0).clamp(240.0, 720.0);
         let card = Rect::new(
             view.x + ((view.w - width) * 0.5).round(),
             view.y + ((view.h - height) * 0.42).round().max(24.0),

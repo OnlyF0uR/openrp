@@ -18,6 +18,8 @@ pub struct Login {
     /// Something that went wrong out of sight (a failed save), told once
     /// the chat opens.
     pub problem: Option<String>,
+    /// How far the card is scrolled, when it is taller than the window.
+    scroll: f32,
 }
 
 impl Login {
@@ -27,7 +29,7 @@ impl Login {
     pub fn new(error: Option<String>, base_url: &str) -> Self {
         let mut form = ProviderForm::new(base_url, false);
         form.error = error;
-        Self { form, problem: None }
+        Self { form, problem: None, scroll: 0.0 }
     }
 
     /// Where the input method's candidate window should appear.
@@ -72,7 +74,10 @@ impl Login {
 
         // Logo, title, subtitle, the form and the button under it.
         let height = 32.0 + 40.0 + 20.0 + 30.0 + 6.0 + subtitle.height() + 24.0 + form_h + 24.0 + 36.0 + 32.0;
-        let card = Rect::new(((view.w - width) * 0.5).round(), ((view.h - height) * 0.5).round(), width, height);
+        // Taller than the window (a high zoom), the card scrolls instead.
+        self.scroll = (self.scroll + ui.scroll).clamp(0.0, (height + 32.0 - view.h).max(0.0));
+        let top = ((view.h - height) * 0.5).max(16.0).round() - self.scroll.round();
+        let card = Rect::new(((view.w - width) * 0.5).round(), top, width, height);
         p.shadow(Rect::new(card.x, card.y + 8.0, card.w, card.h), t.shadow, theme::RADIUS, 24.0);
         p.bordered(card, t.panel, theme::RADIUS, 1.0, t.border_strong);
 

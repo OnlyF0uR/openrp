@@ -38,6 +38,9 @@ const PHOTO: f32 = 58.0;
 const MEMORY_WIDTH: f32 = 640.0;
 /// Space between two memories.
 const MEMORY_GAP: f32 = 8.0;
+/// Height of a dialog's foot: the space above its buttons, the buttons and
+/// the space below them.
+const FOOTER_H: f32 = 24.0 + 34.0 + 24.0;
 /// Size of the button removing a memory.
 const REMOVE: f32 = 28.0;
 /// Height of a persona's card in the player form.
@@ -108,8 +111,12 @@ pub(super) struct CharacterForm {
     pub subject: Subject,
     /// A dialog that can be cancelled, not the first question of a story.
     editing: bool,
-    /// How far the memory list is scrolled.
+    /// How far the memory list, or a form taller than the window, is
+    /// scrolled.
     scroll: f32,
+    /// Where the caret was last frame, within the scrolled content: when
+    /// it moves, the form scrolls to keep it in sight.
+    caret_at: Option<(f32, f32)>,
     /// A cast member's portrait file name; empty for none.
     portrait: String,
     /// Their colour, as `#rrggbb`; empty for one from their name.
@@ -150,6 +157,7 @@ impl CharacterForm {
             subject,
             editing,
             scroll: 0.0,
+            caret_at: None,
             portrait: String::new(),
             color: String::new(),
             picker: None,
@@ -538,9 +546,8 @@ impl Chat {
         }
         // An open colour picker covers what is beneath it.
         let covered = ui.blocker;
-        if let Some(rect) = form.picker.as_ref().and_then(|picker| picker.rect) {
-            ui.blocker = Some(rect);
-        }
+        let shield = form.picker.as_ref().and_then(|picker| picker.rect).or(covered);
+        ui.blocker = shield;
         let (subject, editing) = (form.subject.clone(), form.editing);
         let name = form.fields.text(NAME).trim().to_owned();
         let description = form.fields.text(DESCRIPTION).trim().to_owned();
@@ -644,21 +651,37 @@ impl Chat {
         let more_h = if more > 0 { 34.0 } else { 0.0 };
         let personas_h =
             if personas.is_empty() { 0.0 } else { 22.0 + card_rows * (PERSONA_H + 8.0) - 8.0 + more_h + 20.0 };
-        let height = 24.0 + 30.0 + note_h + personas_h + name_block + 22.0 + body_h + error_h + 24.0 + 34.0 + 24.0;
+        let height = 24.0 + 30.0 + note_h + personas_h + name_block + 22.0 + body_h + error_h + FOOTER_H;
+        // Never taller than the window (at any zoom): what does not fit
+        // scrolls, above buttons that stay in sight.
+        let card_h = height.min((area.h - 32.0).max(FOOTER_H + 120.0));
         let card = Rect::new(
             area.x + ((area.w - width) * 0.5).round(),
-            area.y + ((area.h - height) * 0.42).max(16.0).round(),
+            area.y + ((area.h - card_h) * 0.42).max(16.0).round(),
             width,
-            height,
+            card_h,
         );
+        let view = Rect::new(card.x, card.y + 1.0, card.w, card.h - FOOTER_H + 11.0);
+        if ui.hovered(card) {
+            form.scroll += ui.scroll;
+            ui.scroll = 0.0;
+        }
+        form.scroll = form.scroll.clamp(0.0, height - card_h);
+        let scroll = form.scroll.round();
+        // Content scrolled out of sight must not react: away from the view,
+        // nothing in it does.
+        if !view.contains(ui.mouse) {
+            ui.blocker = Some(Rect::new(-1e9, -1e9, 2e9, 2e9));
+        }
         if editing {
             p.rect(area, hexa(0x000000, 0.35), 0.0);
         }
         p.shadow(Rect::new(card.x, card.y + 8.0, card.w, card.h), t.shadow, theme::RADIUS, 24.0);
         p.bordered(card, t.panel, theme::RADIUS, 1.0, t.border_strong);
+        let clip = p.push_clip(view);
 
         let x = card.x + 24.0;
-        let mut y = card.y + 24.0;
+        let mut y = card.y + 24.0 - scroll;
         let mut title = p.layout(&title, theme::TITLE, None);
         title.truncate(p.fonts, inner);
         p.text(&title, x, y, t.text);
@@ -785,9 +808,26 @@ impl Chat {
         }
         if let Some(error) = &error {
             p.text(error, x, y + 8.0, t.danger);
-            y += error_h;
         }
-        y += 24.0;
+        p.set_clip(clip);
+        ui.blocker = shield;
+        // Keep the caret in sight as it moves, but not against the wheel.
+        if let Some(form) = self.character_form()
+            && let Some(caret) = form.fields.caret()
+        {
+            let at = (caret.x, caret.y - view.y + scroll);
+            if form.caret_at.is_some_and(|before| before != at) {
+                let (top, bottom) = (view.y + 8.0, view.bottom() - 8.0);
+                form.scroll += (caret.bottom() - bottom).max(0.0) - (top - caret.y).max(0.0);
+                ui.animating = true;
+            }
+            form.caret_at = Some(at);
+        }
+        if height > card_h {
+            // What scrolls ends at a hairline over the buttons.
+            p.rect(Rect::new(card.x + 1.0, view.bottom(), card.w - 2.0, 1.0), t.border, 0.0);
+        }
+        let y = card.bottom() - FOOTER_H + 24.0;
 
         let ready = match generate {
             Some((busy, _)) => !busy,
@@ -846,7 +886,7 @@ impl Chat {
         let content_h = heights.iter().sum::<f32>() + MEMORY_GAP * heights.len().saturating_sub(1) as f32;
         // Title, note, the add button and the footer around the list.
         let chrome = 24.0 + 30.0 + note_h + 12.0 + 30.0 + 24.0 + 34.0 + 24.0;
-        let list_h = content_h.min((area.h - 32.0 - chrome).max(120.0));
+        let list_h = content_h.min((area.h - 32.0 - chrome).max(48.0));
         let height = chrome + list_h;
         let card = Rect::new(
             area.x + ((area.w - width) * 0.5).round(),
