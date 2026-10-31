@@ -200,7 +200,11 @@ impl Client {
         cancel: &AtomicBool,
         mut on_event: impl FnMut(StreamEvent),
     ) -> Result<bool> {
-        crate::completions::stream(self, request, cancel, &mut on_event)
+        if self.anthropic {
+            crate::messages::stream(self, request, cancel, &mut on_event)
+        } else {
+            crate::completions::stream(self, request, cancel, &mut on_event)
+        }
     }
 }
 

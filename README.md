@@ -1,7 +1,7 @@
 # OpenRP
 
-A native, GPU-rendered roleplay AI engine for any OpenAI-compatible API (OpenRouter, Inworld,
-OpenAI, Ollama, ...). It runs on Windows, macOS and Linux, and it is pure Rust: no web view and no UI framework.
+A native, GPU-rendered roleplay AI engine for Anthropic's API or any OpenAI-compatible one
+(OpenRouter, Inworld, OpenAI, Ollama, ...). It runs on Windows, macOS and Linux, and it is pure Rust: no web view and no UI framework.
 
 ```sh
 cargo run --release -p openrp     # binary name: openrp
@@ -173,9 +173,12 @@ cargo clippy --workspace --all-targets
   cheaper one saves money, and summaries stay on the story's model when it holds less
   context), Usage totals, and Provider (edit the base URL and key, or forget the key; the data
   folder).
-- **Any OpenAI-compatible provider**: until one is set, the app asks for its base URL and API
-  key (left empty for a local server that needs none), with presets for OpenRouter, Inworld,
-  OpenAI and Ollama. It is spoken to with Chat Completions; the model must support tool calls.
+- **Anthropic or any OpenAI-compatible provider**: until one is set, the app asks for its base
+  URL and API key (left empty for a local server that needs none), with presets for Anthropic,
+  OpenRouter, Inworld, OpenAI and Ollama. An address on `api.anthropic.com` is spoken to with
+  Anthropic's Messages API, which caches the system prompt and the story so far and shows
+  Claude's summarized thinking when an effort is picked; every other one with Chat Completions.
+  The model must support tool calls.
 - **The window remembers** its size and whether it was maximized.
 - **Zoom** (Ctrl/Cmd + and -, Ctrl/Cmd+0 resets): everything grows or shrinks, from 50% to 200%,
   in steps of 10%; kept for the next start.
@@ -189,7 +192,7 @@ cargo clippy --workspace --all-targets
 
 | Crate             | Purpose                                                                          |
 |-------------------|----------------------------------------------------------------------------------|
-| `crates/core` (`openrp-core`) | API client: models and streaming replies with tools (Chat Completions, for any OpenAI-compatible provider), config, sessions, worlds and characters, character cards and lorebooks (`card.rs`) |
+| `crates/core` (`openrp-core`) | API client: models and streaming replies with tools (Chat Completions for any OpenAI-compatible provider, `messages.rs` for Anthropic), config, sessions, worlds and characters, character cards and lorebooks (`card.rs`) |
 | `crates/desktop`  | The app (`openrp`): winit window, wgpu renderer, text engine, immediate-mode UI  |
 
 `crates/desktop/src`:

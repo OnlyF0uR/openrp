@@ -1,6 +1,6 @@
 [package]
 name = "openrp-core"
-description = "OpenRP's model client (OpenAI-compatible Chat Completions streaming) and local data."
+description = "OpenRP's model client (OpenAI-compatible Chat Completions and Anthropic Messages streaming) and local data."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

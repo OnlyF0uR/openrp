@@ -939,6 +939,10 @@ impl Chat {
             session.memories.clear();
             session.scene.clear();
             session.reviewed = 0;
+            // Former names serve only turns that used them; unseen in the
+            // UI, they would tell the model what the old story was.
+            session.player.iter_mut().for_each(|p| p.aliases.clear());
+            session.cast.iter_mut().for_each(|m| m.aliases.clear());
         } else {
             if !session.title.is_empty() {
                 session.title.push_str(" (copy)");
@@ -2173,6 +2177,8 @@ mod tests {
         original.entries.last_mut().unwrap().message.cost = 0.25;
         (original.scene, original.memories, original.note) =
             ("The woods.".into(), vec!["A fact.".into()], "Be brief.".into());
+        original.player.as_mut().unwrap().aliases = vec!["Darth Gale".into()];
+        original.cast[0].aliases = vec!["The Girl on Fire".into()];
         let (source, source_session) = (original.id, original.session_id.clone());
 
         let mut actions = Vec::new();
@@ -2186,6 +2192,7 @@ mod tests {
                 && copy.cast.len() == 1
         );
         assert!(copy.messages.iter().all(|m| m.cost == 0.0), "the replies were paid for once");
+        assert!(copy.cast[0].aliases.len() == 1 && copy.player.as_ref().is_some_and(|p| p.aliases.len() == 1));
         assert!(chat.current().id != source && chat.current().entries.len() == 2, "the copy is open");
 
         let mut actions = Vec::new();
@@ -2199,6 +2206,10 @@ mod tests {
                 && frame.note == "Be brief."
                 && frame.player.is_some()
                 && frame.world.as_deref() == Some("w")
+        );
+        assert!(
+            frame.cast[0].aliases.is_empty() && frame.player.as_ref().is_some_and(|p| p.aliases.is_empty()),
+            "former names would tell the model the old story"
         );
         assert!(chat.current().playable(), "a frame is ready to play");
 

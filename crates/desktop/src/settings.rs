@@ -241,8 +241,8 @@ impl SettingsView {
                 setting_row(
                     p,
                     card,
-                    "OpenAI-compatible API",
-                    "Any provider or local server that speaks Chat Completions.",
+                    "API",
+                    "Anthropic's, or any provider or local server that speaks Chat Completions.",
                 );
                 self.form.draw(p, ui, card.x + 16.0, card.y + 68.0, inner);
                 let buttons_y = card.y + 68.0 + form_h + 20.0;

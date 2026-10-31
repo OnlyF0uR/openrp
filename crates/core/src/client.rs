@@ -1,5 +1,6 @@
 //! Blocking HTTP client for an OpenAI-compatible provider, spoken to with
-//! Chat Completions (see `completions.rs`).
+//! Chat Completions (see `completions.rs`), or for Anthropic's own API,
+//! spoken to with Messages (see `messages.rs`).
 //!
 //! Every call blocks the calling thread; the desktop app runs them on worker
 //! threads so the render loop never waits on the network.
@@ -16,6 +17,10 @@ use crate::error::{Error, Result};
 const BODY_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 /// Longest wait a `Retry-After` header is trusted with.
 const MAX_RETRY_AFTER: Duration = Duration::from_secs(10 * 60);
+/// Anthropic's API root, whichever way its address was entered.
+const ANTHROPIC: &str = "https://api.anthropic.com/v1";
+/// The `anthropic-version` requests are made against.
+const ANTHROPIC_VERSION: &str = "2026-10-21";
 
 /// A cheaply clonable handle to the API. Clones share one connection pool.
 #[derive(Clone)]
@@ -25,6 +30,8 @@ pub struct Client {
     base: String,
     /// The provider's API key.
     token: Option<String>,
+    /// Whether the provider is Anthropic, spoken to with Messages.
+    pub(crate) anthropic: bool,
 }
 
 impl std::fmt::Debug for Client {
@@ -32,13 +39,14 @@ impl std::fmt::Debug for Client {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Client")
             .field("base", &self.base)
+            .field("anthropic", &self.anthropic)
             .field("authenticated", &self.token.is_some())
             .finish_non_exhaustive()
     }
 }
 
 /// A chat model offered by the API.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
 pub struct Model {
     /// Identifier sent in requests, e.g. `claude-sonnet-5.5`.
     pub id: String,
@@ -89,7 +97,8 @@ impl Model {
 impl Client {
     /// Creates a client for an OpenAI-compatible provider whose API root is
     /// `base_url` (e.g. `https://openrouter.ai/api/v1`), authenticated with
-    /// `api_key` when there is one (local servers often need none).
+    /// `api_key` when there is one (local servers often need none). An
+    /// address on `api.anthropic.com` means Anthropic's own API.
     #[must_use]
     pub fn new(base_url: &str, api_key: Option<String>) -> Self {
         let agent = ureq::Agent::config_builder()
@@ -103,7 +112,10 @@ impl Client {
             .user_agent(concat!("openrp/", env!("CARGO_PKG_VERSION")))
             .build()
             .into();
-        Self { agent, base: base_url.trim_end_matches('/').to_owned(), token: api_key }
+        let host = base_url.split_once("://").and_then(|(_, rest)| rest.split(['/', ':']).next());
+        let anthropic = host.is_some_and(|host| host.eq_ignore_ascii_case("api.anthropic.com"));
+        let base = if anthropic { ANTHROPIC } else { base_url.trim_end_matches('/') };
+        Self { agent, base: base.to_owned(), token: api_key, anthropic }
     }
 
     /// Lists the available chat models.
@@ -115,11 +127,11 @@ impl Client {
         struct Body {
             data: Vec<Model>,
         }
-        let mut request = self.agent.get(format!("{}/models", self.base));
-        if let Some(token) = &self.token {
-            request = request.header("Authorization", format!("Bearer {token}"));
+        if self.anthropic {
+            let response = self.authorize(self.agent.get(format!("{}/models?limit=1000", self.base))).call()?;
+            return crate::messages::models(response);
         }
-        let response = request.call()?;
+        let response = self.authorize(self.agent.get(format!("{}/models", self.base))).call()?;
         let body: Body = read_json(response)?;
         Ok(body.data)
     }
@@ -128,11 +140,21 @@ impl Client {
     /// after checking the status. Used by streaming calls that consume the
     /// body incrementally.
     pub(crate) fn post(&self, path: &str, body: &Value) -> Result<Response<ureq::Body>> {
-        let mut request = self.agent.post(format!("{}{path}", self.base)).content_type("application/json");
-        if let Some(token) = &self.token {
-            request = request.header("Authorization", format!("Bearer {token}"));
+        let request = self.agent.post(format!("{}{path}", self.base)).content_type("application/json");
+        check_status(self.authorize(request).send(&serde_json::to_vec(body)?[..])?)
+    }
+
+    /// `request` with the provider's credentials: Anthropic's own headers,
+    /// or a bearer token.
+    fn authorize<B>(&self, mut request: ureq::RequestBuilder<B>) -> ureq::RequestBuilder<B> {
+        if self.anthropic {
+            request = request.header("anthropic-version", ANTHROPIC_VERSION);
         }
-        check_status(request.send(&serde_json::to_vec(body)?[..])?)
+        match &self.token {
+            Some(token) if self.anthropic => request.header("x-api-key", token),
+            Some(token) => request.header("Authorization", format!("Bearer {token}")),
+            None => request,
+        }
     }
 }
 
@@ -210,6 +232,20 @@ mod tests {
             Usage { input_tokens: 1_000_000, output_tokens: 0, cached_tokens: 600_000, cache_write_tokens: 100_000 };
         assert!((cached.cost(usage) - (0.6 + 0.12 + 0.25)).abs() < 1e-9);
         assert_eq!(cached.context_window, 1_000_000);
+    }
+
+    #[test]
+    fn anthropic_is_known_by_its_host() {
+        let client = |url: &str| super::Client::new(url, None);
+        for url in
+            ["https://api.anthropic.com", "https://API.anthropic.com/v1/messages", "http://api.anthropic.com:443/"]
+        {
+            assert!(client(url).anthropic && client(url).base == super::ANTHROPIC, "{url}");
+        }
+        for url in ["https://openrouter.ai/api/v1", "https://api.anthropic.com.evil.example/v1", "api.anthropic.com"] {
+            assert!(!client(url).anthropic, "{url}");
+        }
+        assert_eq!(client("http://localhost:11434/v1/").base, "http://localhost:11434/v1");
     }
 
     #[test]

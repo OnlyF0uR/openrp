@@ -1,7 +1,7 @@
 //! OpenRP's model client and local data.
 //!
 //! * [`Client`]: model listing and streaming responses with function tools,
-//!   from any OpenAI-compatible provider.
+//!   from any OpenAI-compatible provider or from Anthropic's own API.
 //! * [`Config`]: the user's settings in `~/.openrp/config.toml`.
 //! * [`SessionStore`]: saved conversations in `~/.openrp/sessions/`.
 //! * [`Library`]: [`World`]s, [`Character`]s and [`Persona`]s in
@@ -16,6 +16,7 @@ mod completions;
 mod config;
 mod error;
 mod library;
+mod messages;
 mod responses;
 mod session;
 mod sse;

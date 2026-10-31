@@ -373,10 +373,15 @@ impl Chat {
         // Begin: the story opens with a greeting, if someone in it has one.
         let begins = subject == Subject::Player && conversation.player.is_none();
         // A new name keeps the old one as an alias: earlier turns use it.
+        // Without turns an alias only tells the model a name nothing uses.
+        let untold = conversation.entries.is_empty();
         match subject {
             Subject::Player => match &mut conversation.player {
                 Some(player) => {
                     rename(&mut player.name, &mut player.aliases, &name);
+                    if untold {
+                        player.aliases.clear();
+                    }
                     (player.description, player.portrait, player.color) = (description, portrait, color);
                 }
                 None => conversation.player = Some(Player { name, description, portrait, color, ..Player::default() }),
@@ -384,6 +389,9 @@ impl Chat {
             Subject::Member(id) => {
                 if let Some(member) = conversation.cast.iter_mut().find(|m| m.id == id) {
                     rename(&mut member.name, &mut member.aliases, &name);
+                    if untold {
+                        member.aliases.clear();
+                    }
                     (member.description, member.portrait, member.color) = (description, portrait, color);
                 }
             }
@@ -1034,6 +1042,15 @@ mod tests {
         chat.sync_character_form();
         assert!(chat.character_form.is_none());
 
+        // Renamed before anything was said: no former name lingers.
+        chat.edit_player();
+        chat.character_form().unwrap().fields.replace(NAME, "Hawthorne");
+        chat.submit_form(&mut Vec::new());
+        chat.edit_player();
+        chat.character_form().unwrap().fields.replace(NAME, "Gale");
+        chat.submit_form(&mut Vec::new());
+        assert!(chat.current().player.as_ref().is_some_and(|p| p.name == "Gale" && p.aliases.is_empty()));
+
         // Editing later fills in the player and saves a story with messages.
         chat.composer.insert("I wake up.");
         chat.send(&mut actions);
@@ -1046,6 +1063,11 @@ mod tests {
         assert!(
             matches!(&actions[..], [Action::SaveSession(s)] if s.player.as_ref().is_some_and(|p| p.description == "A hunter."))
         );
+        // Once turns use a name, a rename keeps it.
+        chat.edit_player();
+        chat.character_form().unwrap().fields.replace(NAME, "Hawthorne");
+        chat.submit_form(&mut Vec::new());
+        assert!(chat.current().player.as_ref().is_some_and(|p| p.aliases == ["Gale"]));
     }
 
     #[test]

@@ -240,7 +240,7 @@ pub enum Action {
     Copy(String),
     /// A reply finished or failed: flash the window if it is in the background.
     Attention,
-    /// Use an OpenAI-compatible provider from now on.
+    /// Use this provider from now on.
     Connect {
         /// Its API root, e.g. `https://openrouter.ai/api/v1`.
         base_url: String,

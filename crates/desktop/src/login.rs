@@ -1,5 +1,5 @@
 //! The connect screen, shown while no provider is set: the base URL and API
-//! key of an OpenAI-compatible API (see `ProviderForm`).
+//! key of Anthropic's API or an OpenAI-compatible one (see `ProviderForm`).
 
 use arboard::Clipboard;
 use winit::event::KeyEvent;
@@ -68,7 +68,7 @@ impl Login {
         let t = p.theme;
         let width = 400.0;
         let inner = width - 64.0;
-        let subtitle = "Enter the base URL and API key of any OpenAI-compatible API, such as OpenRouter or Inworld. Your key stays on this device.";
+        let subtitle = "Enter the base URL and API key of Anthropic's API or any OpenAI-compatible one, such as OpenRouter or Inworld. Your key stays on this device.";
         let subtitle = p.layout(subtitle, Style { line_height: 1.5, ..theme::SMALL }, Some(inner));
         let form_h = self.form.height(p, inner);
 

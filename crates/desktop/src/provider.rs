@@ -1,5 +1,6 @@
-//! The custom provider form: an OpenAI-compatible API's address and key,
-//! with presets for well-known ones. Sign-in and settings both show it.
+//! The custom provider form: the address and key of Anthropic's API or an
+//! OpenAI-compatible one, with presets for well-known ones. Sign-in and
+//! settings both show it.
 
 use arboard::Clipboard;
 use winit::event::KeyEvent;
@@ -12,8 +13,9 @@ use crate::text::TextLayout;
 use crate::theme;
 use crate::ui::{ButtonStyle, Ui, button};
 
-/// Well-known OpenAI-compatible APIs: name and API root.
-const PRESETS: [(&str, &str); 4] = [
+/// Well-known APIs: name and API root.
+const PRESETS: [(&str, &str); 5] = [
+    ("Anthropic", "https://api.anthropic.com/v1"),
     ("OpenRouter", "https://openrouter.ai/api/v1"),
     ("Inworld", "https://api.inworld.ai/v1"),
     ("OpenAI", "https://api.openai.com/v1"),
@@ -95,24 +97,23 @@ impl ProviderForm {
     pub fn height(&self, p: &Painter, width: f32) -> f32 {
         let fields: f32 = self.layouts(p, width).iter().map(|(_, h)| LABEL_H + h + GAP).sum();
         let error = self.error.as_deref().map_or(0.0, |e| p.layout(e, theme::SMALL, Some(width)).height() + GAP);
-        PRESET_H + GAP + fields + error - GAP
+        Self::presets(p, width).1 + GAP + fields + error - GAP
     }
 
     /// Draws the form at `(x, y)`, `width` wide.
     pub fn draw(&mut self, p: &mut Painter, ui: &mut Ui, x: f32, mut y: f32, width: f32) {
         let t = p.theme;
-        let mut preset_x = x;
-        for (name, url) in PRESETS {
-            let preset_w = (p.layout(name, theme::LABEL, None).width() + 20.0).round();
-            if button(p, ui, Rect::new(preset_x, y, preset_w, PRESET_H), name, ButtonStyle::Secondary, true) {
+        let (buttons, presets_h) = Self::presets(p, width);
+        for ((name, url), button_at) in PRESETS.into_iter().zip(buttons) {
+            let at = Rect::new(x + button_at.x, y + button_at.y, button_at.w, button_at.h);
+            if button(p, ui, at, name, ButtonStyle::Secondary, true) {
                 self.fields.replace(URL, url);
                 // The key is what comes next.
                 self.fields.focus(KEY);
                 self.error = None;
             }
-            preset_x += preset_w + 6.0;
         }
-        y += PRESET_H + GAP;
+        y += presets_h + GAP;
         let [url, key] = self.layouts(p, width);
         for (index, label, hint, (layout, h)) in
             [(URL, "Base URL", "https://…/v1", url), (KEY, "API key", self.key_hint, key)]
@@ -126,6 +127,21 @@ impl ProviderForm {
             let text = p.layout(error, theme::SMALL, Some(width));
             p.text(&text, x, y, t.danger);
         }
+    }
+
+    /// Where each preset button sits from the form's corner, its rows
+    /// wrapped to `width`, and their height.
+    fn presets(p: &Painter, width: f32) -> ([Rect; PRESETS.len()], f32) {
+        let (mut x, mut y) = (0.0, 0.0);
+        let buttons = PRESETS.map(|(name, _)| {
+            let w = (p.layout(name, theme::LABEL, None).width() + 20.0).round();
+            if x > 0.0 && x + w > width {
+                (x, y) = (0.0, y + PRESET_H + 6.0);
+            }
+            x += w + 6.0;
+            Rect::new(x - w - 6.0, y, w, PRESET_H)
+        });
+        (buttons, y + PRESET_H)
     }
 
     /// Each field's layout and box height for `width`. Both wrap, so a long
