@@ -12,8 +12,8 @@
 //! costs context only where it matters. Characters also carry what character
 //! cards do (see `card.rs`): greetings that open a story and example dialogue.
 //!
-//! Portraits are the app's own copies of PNG or JPEG files, named
-//! `<id>.png` / `<id>.jpg`, and shared: a story's cast copies them from the
+//! Portraits are the app's own copies of PNG, JPEG or WebP files, named
+//! `<id>.png` / `<id>.jpg` / `<id>.webp`, and shared: a story's cast copies them from the
 //! library. Records name them by file name only; a name that
 //! is anything else (say, a hand-edited `../secret`) is ignored.
 //!
@@ -372,15 +372,15 @@ impl Portraits {
     #[must_use]
     pub fn path(&self, name: &str) -> Option<PathBuf> {
         let (stem, ext) = name.rsplit_once('.')?;
-        (valid_id(stem) && matches!(ext, "png" | "jpg")).then(|| self.dir.join(name))
+        (valid_id(stem) && matches!(ext, "png" | "jpg" | "webp")).then(|| self.dir.join(name))
     }
 
-    /// Copies the PNG or JPEG at `source` in under a fresh name and returns
+    /// Copies the PNG, JPEG or WebP at `source` in under a fresh name and returns
     /// that name.
     ///
     /// # Errors
-    /// The file cannot be read, is larger than 20 MB, is not a PNG or JPEG,
-    /// or cannot be written.
+    /// The file cannot be read, is larger than 20 MB, is not a PNG, JPEG or
+    /// WebP, or cannot be written.
     pub fn import(&self, source: &Path) -> Result<String> {
         if fs::metadata(source)?.len() > MAX_PORTRAIT {
             return Err(invalid("The image is larger than 20 MB."));
@@ -388,11 +388,12 @@ impl Portraits {
         self.add(&fs::read(source)?)
     }
 
-    /// Saves the PNG or JPEG `bytes` under a fresh name and returns that name.
+    /// Saves the PNG, JPEG or WebP `bytes` under a fresh name and returns
+    /// that name.
     ///
     /// # Errors
-    /// The image is larger than 20 MB, is not a PNG or JPEG, or cannot be
-    /// written.
+    /// The image is larger than 20 MB, is not a PNG, JPEG or WebP, or cannot
+    /// be written.
     pub fn add(&self, bytes: &[u8]) -> Result<String> {
         if bytes.len() as u64 > MAX_PORTRAIT {
             return Err(invalid("The image is larger than 20 MB."));
@@ -401,8 +402,10 @@ impl Portraits {
             "png"
         } else if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
             "jpg"
+        } else if bytes.starts_with(b"RIFF") && bytes.get(8..12) == Some(b"WEBP") {
+            "webp"
         } else {
-            return Err(invalid("Only PNG and JPEG images can be portraits."));
+            return Err(invalid("Only PNG, JPEG and WebP images can be portraits."));
         };
         let name = format!("{}.{ext}", crate::session::new_id());
         write_private(&self.dir.join(&name), bytes)?;
@@ -474,6 +477,10 @@ mod tests {
         assert_eq!(portraits.collect_garbage(&keep, Duration::ZERO).unwrap(), 1);
         assert!(!copy.exists() && portraits.path(&kept).unwrap().exists() && foreign.exists());
         assert_eq!(Portraits::at(dir.join("missing")).collect_garbage(&keep, Duration::ZERO).unwrap(), 0);
+        let webp = portraits.add(b"RIFF\0\0\0\0WEBPVP8 ").unwrap();
+        assert_eq!(Path::new(&webp).extension().and_then(|e| e.to_str()), Some("webp"));
+        assert!(portraits.path(&webp).is_some());
+        assert!(portraits.add(b"RIFF\0\0\0\0WAVE").is_err(), "RIFF but not WebP");
         fs::remove_dir_all(&dir).unwrap();
     }
 

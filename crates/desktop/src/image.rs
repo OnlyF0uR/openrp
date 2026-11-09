@@ -7,7 +7,7 @@
 //! evicted from the atlas is decoded again when it scrolls back into view,
 //! so memory stays bounded by the atlas.
 //!
-//! PNG and JPEG are decoded: the formats portraits are accepted in.
+//! PNG, JPEG and WebP are decoded: the formats portraits are accepted in.
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -136,26 +136,53 @@ impl ImageAtlas {
 /// cropping the overflow evenly. Slow: run it on a worker thread.
 ///
 /// # Errors
-/// A human-readable reason: unreadable, too large, or not a PNG or JPEG.
+/// A human-readable reason: unreadable, too large, or not a PNG, JPEG or
+/// WebP.
 pub fn thumbnail(key: &ImageKey) -> Result<Vec<u8>, String> {
     let mut bytes = Vec::new();
     fs::File::open(&key.path).and_then(|f| f.take(MAX_FILE + 1).read_to_end(&mut bytes)).map_err(|e| e.to_string())?;
     if bytes.len() as u64 > MAX_FILE {
         return Err("the file is too large".into());
     }
-    let (rgba, w, h, orientation) = if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
-        let (rgba, w, h) = decode_png(&bytes)?;
-        (rgba, w, h, 1)
-    } else if bytes.starts_with(&[0xFF, 0xD8]) {
-        decode_jpeg(&bytes)?
-    } else {
-        return Err("not a PNG or JPEG image".into());
-    };
+    let (rgba, w, h, orientation) = decode(&bytes)?;
     // Orientations 5–8 swap the axes: scale for the transposed size.
     let swap = orientation >= 5;
     let (tw, th) = if swap { (key.h, key.w) } else { (key.w, key.h) };
     let small = cover(&rgba, w, h, tw, th);
     Ok(orient(&small, tw, th, orientation))
+}
+
+/// Decodes a PNG, JPEG or WebP to straight-alpha RGBA, with its EXIF
+/// orientation (1 when absent; only JPEG's is read).
+fn decode(bytes: &[u8]) -> Result<(Vec<u8>, u32, u32, u8), String> {
+    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        let (rgba, w, h) = decode_png(bytes)?;
+        Ok((rgba, w, h, 1))
+    } else if bytes.starts_with(&[0xFF, 0xD8]) {
+        decode_jpeg(bytes)
+    } else if bytes.starts_with(b"RIFF") && bytes.get(8..12) == Some(b"WEBP") {
+        let (rgba, w, h) = decode_webp(bytes)?;
+        Ok((rgba, w, h, 1))
+    } else {
+        Err("not a PNG, JPEG or WebP image".into())
+    }
+}
+
+/// Decodes a WebP (the first frame, if animated) to straight-alpha RGBA.
+fn decode_webp(bytes: &[u8]) -> Result<(Vec<u8>, u32, u32), String> {
+    let mut decoder = image_webp::WebPDecoder::new(std::io::Cursor::new(bytes)).map_err(|e| e.to_string())?;
+    decoder.set_memory_limit(MAX_PIXELS * 4);
+    let (w, h) = decoder.dimensions();
+    // Checked before allocating: a WebP header may claim 16383² pixels.
+    if w as usize * h as usize > MAX_PIXELS {
+        return Err("the image is too large".into());
+    }
+    let mut buf = vec![0; decoder.output_buffer_size().ok_or("the image is too large")?];
+    decoder.read_image(&mut buf).map_err(|e| e.to_string())?;
+    if decoder.has_alpha() {
+        return Ok((buf, w, h));
+    }
+    Ok((buf.as_chunks::<3>().0.iter().flat_map(|p| [p[0], p[1], p[2], 255]).collect(), w, h))
 }
 
 /// Decodes a PNG to straight-alpha RGBA.
@@ -298,10 +325,12 @@ fn cover(src: &[u8], sw: u32, sh: u32, dw: u32, dh: u32) -> Vec<u8> {
 }
 
 /// The image at `path` as PNG bytes, for a character card: a PNG as it is,
-/// a JPEG decoded (upright) and encoded as PNG. Slow: run it on a worker.
+/// a JPEG (upright) or WebP decoded and encoded as PNG. Slow: run it on a
+/// worker.
 ///
 /// # Errors
-/// A human-readable reason: unreadable, too large, or not a PNG or JPEG.
+/// A human-readable reason: unreadable, too large, or not a PNG, JPEG or
+/// WebP.
 pub fn png_bytes(path: &std::path::Path) -> Result<Vec<u8>, String> {
     let mut bytes = Vec::new();
     fs::File::open(path).and_then(|f| f.take(MAX_FILE + 1).read_to_end(&mut bytes)).map_err(|e| e.to_string())?;
@@ -311,10 +340,7 @@ pub fn png_bytes(path: &std::path::Path) -> Result<Vec<u8>, String> {
     if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
         return Ok(bytes);
     }
-    if !bytes.starts_with(&[0xFF, 0xD8]) {
-        return Err("the portrait is not a PNG or JPEG image".into());
-    }
-    let (rgba, w, h, orientation) = decode_jpeg(&bytes)?;
+    let (rgba, w, h, orientation) = decode(&bytes).map_err(|e| format!("the portrait: {e}"))?;
     let rgba = orient(&rgba, w, h, orientation);
     let (w, h) = if orientation >= 5 { (h, w) } else { (w, h) };
     let mut out = Vec::new();
@@ -391,6 +417,16 @@ mod tests {
         assert!(thumbnail(&key(2, 2)).is_err());
         fs::write(&path, b"GIF89a").unwrap();
         assert!(thumbnail(&key(2, 2)).is_err());
+        fs::write(&path, b"RIFF\0\0\0\0WEBPgarbage").unwrap();
+        assert!(thumbnail(&key(2, 2)).is_err());
+
+        // A lossless WebP decodes like the PNG, and exports as a PNG.
+        let mut webp = Vec::new();
+        image_webp::WebPEncoder::new(&mut webp).encode(&red_blue, 4, 2, image_webp::ColorType::Rgb8).unwrap();
+        fs::write(&path, &webp).unwrap();
+        let square = thumbnail(&key(2, 2)).unwrap();
+        assert_eq!(&square[..8], [255, 0, 0, 255, 0, 0, 255, 255]);
+        assert!(png_bytes(&path).unwrap().starts_with(b"\x89PNG"));
         fs::remove_dir_all(&dir).unwrap();
     }
 

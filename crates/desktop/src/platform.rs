@@ -162,9 +162,9 @@ fn powershell(script: &str, vars: &[(&str, &str)]) -> io::Result<Vec<String>> {
 pub type Filter<'a> = (&'a str, &'a [&'a str]);
 
 /// The portrait picker's file types.
-const IMAGES: Filter<'static> = ("Images", &["png", "jpg", "jpeg"]);
+const IMAGES: Filter<'static> = ("Images", &["png", "jpg", "jpeg", "webp"]);
 
-/// Asks the user for a PNG or JPEG image. `None` when cancelled.
+/// Asks the user for a PNG, JPEG or WebP image. `None` when cancelled.
 ///
 /// # Errors
 /// No dialog helper could be started.
@@ -266,6 +266,7 @@ fn uti(extension: &str) -> &'static str {
     match extension {
         "png" => "public.png",
         "jpg" | "jpeg" => "public.jpeg",
+        "webp" => "org.webmproject.webp",
         "json" => "public.json",
         _ => "public.data",
     }

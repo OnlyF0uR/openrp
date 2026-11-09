@@ -23,7 +23,7 @@ cargo clippy --workspace --all-targets
   as a grid of picture cards (portraits stand tall, worlds lie wide), each with its name and
   comment over its foot and its first tag, starred ones first, then newest. A world is a setting to play in (Panem, a galaxy far away);
   a character is someone the AI plays, kept in one library to cast in any story. Each has a
-  name, tags, a description and an optional portrait (PNG or JPEG), created and edited in a
+  name, tags, a description and an optional portrait (PNG, JPEG or WebP), created and edited in a
   form (Ctrl/Cmd+S saves, Esc goes back), and a **comment** only you see (which version of a
   card it is, say): shown on its card and in pickers, never sent to the AI nor exported.
   Typing on a page filters it (names, tags, comments and descriptions; Esc clears it), the chips under the filter narrow it to tags or to the
@@ -201,7 +201,7 @@ cargo clippy --workspace --all-targets
   soft shadows, glyphs and images are all quads, drawn with one draw call per frame.
 - `atlas.rs`: shelf packing for the glyph and image atlases, evicting the least recently
   drawn shelf when full.
-- `image.rs`: thumbnails: PNG/JPEG decoding (with EXIF orientation) on worker threads,
+- `image.rs`: thumbnails: PNG/JPEG/WebP decoding (with JPEG EXIF orientation) on worker threads,
   cover-cropping, and the image atlas, for portraits.
 - `font.rs` + `raster.rs`: font faces (via `ttf-parser`), fallback to system fonts for other
   scripts, GPOS kerning, GSUB emoji ligatures, COLR colour layers, and an exact-area
