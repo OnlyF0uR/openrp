@@ -40,6 +40,8 @@ const FACE: f32 = 38.0;
 const FOOTER_H: f32 = 64.0;
 /// Height of the world's banner atop the panel.
 const BANNER_H: f32 = 132.0;
+/// How far text sits inside the panel's boxes: a row's portrait inset.
+const TEXT_INSET: f32 = 8.0;
 /// Most lines of the scene the panel shows.
 const SCENE_LINES: f32 = 5.0;
 
@@ -302,16 +304,22 @@ impl Chat {
             p.bordered(panel, t.panel, theme::RADIUS, 1.0, t.border_strong);
         }
         let footer = Rect::new(panel.x, panel.bottom() - FOOTER_H, panel.w, FOOTER_H);
-        let body = Rect::new(panel.x + 1.0, panel.y + 1.0, panel.w - 2.0, footer.y - panel.y - 1.0);
+        // Boxes sit `GAP` from every edge, like the canvas and the sidebar's
+        // rows; docked, the top and bottom ones are flush with the canvas's.
+        // Floating, the body sits inside the card's border.
+        let (inset, pad) = if docked { (0.0, 0.0) } else { (1.0, theme::GAP) };
+        let body = Rect::new(panel.x + inset, panel.y + inset, panel.w - 2.0 * inset, footer.y - panel.y - inset);
         if ui.hovered(body) {
             self.cast_scroll += ui.scroll;
             ui.scroll = 0.0;
         }
         self.cast_scroll = self.cast_scroll.clamp(0.0, (self.cast_content_h - body.h).max(0.0));
         let interactive = body.contains(ui.mouse);
-        let (x, content_w) = (panel.x + 16.0, panel.w - 32.0);
+        let (x, content_w) = (panel.x + theme::GAP, panel.w - 2.0 * theme::GAP);
+        // Text lines up with what is inside the boxes: a row's portrait.
+        let tx = x + TEXT_INSET;
         let clip = p.push_clip(body);
-        let top = body.y + 16.0 - self.cast_scroll.round();
+        let top = body.y + pad - self.cast_scroll.round();
         let mut y = top;
 
         // The world: its picture with its name over it, or its name alone.
@@ -331,13 +339,13 @@ impl Chat {
         } else {
             let style = Style { font: crate::text::FontId::SERIF_BOLD, size: 19.0, line_height: 1.3 };
             let mut name = p.layout(&world_name, style, None);
-            name.truncate(p.fonts, content_w);
-            p.text(&name, x, y, t.text);
+            name.truncate(p.fonts, content_w - 2.0 * TEXT_INSET);
+            p.text(&name, tx, y, t.text);
             y += name.height() + 14.0;
         }
 
         // The scene, in the story's serif; clicking it edits it.
-        y = caption(p, "Scene", x, y);
+        y = caption(p, "Scene", tx, y);
         let (text, style, color) = if scene.is_empty() {
             ("Not set yet. The AI sets it as the story starts; click to set it yourself.", theme::SMALL, t.text_faint)
         } else {
@@ -378,8 +386,8 @@ impl Chat {
         y += 30.0 + 24.0;
 
         // Who the user plays; clicking edits them.
-        y = caption(p, "You", x, y);
-        let row = Rect::new(x - 8.0, y, content_w + 16.0, MEMBER_H);
+        y = caption(p, "You", tx, y);
+        let row = Rect::new(x, y, content_w, MEMBER_H);
         let mut edit_you = false;
         if let Some(player) = &player {
             let hovered = interactive && ui.hovered(row);
@@ -394,7 +402,7 @@ impl Chat {
             }
         } else {
             let hint = p.layout("Not chosen yet: say who you are to begin.", theme::SMALL, None);
-            p.text(&hint, x, y + (MEMBER_H - hint.height()) * 0.5, t.text_faint);
+            p.text(&hint, tx, y + (MEMBER_H - hint.height()) * 0.5, t.text_faint);
         }
         y += MEMBER_H + 18.0;
 
@@ -409,23 +417,23 @@ impl Chat {
             // The hint shows while the mouse is over the panel.
             if here && !cast.is_empty() && interactive {
                 let hint = p.layout("Click to move in or out", theme::TINY, None);
-                p.text(&hint, x + content_w - hint.width(), y, t.text_faint);
+                p.text(&hint, x + content_w - TEXT_INSET - hint.width(), y, t.text_faint);
             }
-            y = caption(p, &format!("{title} · {}", members.len()), x, y);
+            y = caption(p, &format!("{title} · {}", members.len()), tx, y);
             if members.is_empty() {
                 let text = if cast.is_empty() {
                     "No one yet. Add characters from your library, or just say who you meet: the AI creates them."
                 } else {
                     "No one is here. Bring someone in, or say who you meet."
                 };
-                let hint = p.layout(text, theme::SMALL, Some(content_w));
-                p.text(&hint, x, y + 2.0, t.text_faint);
+                let hint = p.layout(text, theme::SMALL, Some(content_w - 2.0 * TEXT_INSET));
+                p.text(&hint, tx, y + 2.0, t.text_faint);
                 y += hint.height() + 18.0;
                 continue;
             }
             for &index in members {
                 let member = &cast[index];
-                let row = Rect::new(x - 8.0, y, content_w + 16.0, MEMBER_H);
+                let row = Rect::new(x, y, content_w, MEMBER_H);
                 y += MEMBER_H + 2.0;
                 if row.bottom() < body.y || row.y > body.bottom() {
                     continue;
@@ -470,7 +478,7 @@ impl Chat {
 
         // The footer: adding characters, with the list fading out above it.
         p.gradient(Rect::new(body.x, footer.y - 24.0, body.w, 24.0), fade(t.panel, 0.0), t.panel, 0.0);
-        let add = Rect::new(x, footer.y + (FOOTER_H - 36.0) * 0.5, content_w, 36.0);
+        let add = Rect::new(x, footer.bottom() - pad - 36.0, content_w, 36.0);
         if button(p, ui, add, "+  Add characters", ButtonStyle::Secondary, true) {
             self.menu = if self.menu == Some(Menu::CastLibrary) { None } else { Some(Menu::CastLibrary) };
             self.menu_scroll = 0.0;

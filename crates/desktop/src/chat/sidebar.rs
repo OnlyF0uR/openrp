@@ -14,7 +14,7 @@ use crate::ui::{Ui, icon, id};
 /// Height of a row: navigation and sessions alike.
 const ROW_H: f32 = 32.0;
 /// Inset of rows from the sidebar's edges.
-const INSET: f32 = 10.0;
+const INSET: f32 = theme::GAP;
 
 impl Chat {
     pub(super) fn draw_sidebar(&mut self, p: &mut Painter, ui: &mut Ui, area: Rect, actions: &mut Vec<Action>) {
@@ -22,7 +22,7 @@ impl Chat {
         let width = area.w - 2.0 * INSET;
 
         // A story starts from a world: New story (Ctrl/Cmd+N) opens Worlds.
-        let new = Rect::new(INSET, area.y + 2.0, width, 36.0);
+        let new = Rect::new(INSET, area.y, width, 36.0);
         if new_story(p, ui, new) {
             self.show(Page::Library(Kind::World));
         }
@@ -60,7 +60,7 @@ impl Chat {
 
         let list_top = row_y + 18.0;
         p.label("Recent", theme::CAPTION, INSET + 10.0, list_top, t.text_faint);
-        let settings = Rect::new(INSET, area.bottom() - 12.0 - ROW_H, width, ROW_H);
+        let settings = Rect::new(INSET, area.bottom() - INSET - ROW_H, width, ROW_H);
         let list = Rect::new(0.0, list_top + 22.0, area.w, settings.y - 8.0 - list_top - 22.0);
         let shown = |c: &&super::Conversation| !c.is_fresh();
         let content_h = self.conversations.iter().filter(shown).count() as f32 * (ROW_H + 2.0);
