@@ -42,6 +42,10 @@ fn snapshots() {
         spotlight.open_spotlight();
         let mut dialog = story(&dir);
         dialog.edit_scene();
+        let mut rename = story(&dir);
+        let mut editor = crate::editor::Editor::default();
+        editor.insert("The heron letter");
+        rename.title_edit = Some((rename.current, editor));
         let mut form = story(&dir);
         form.page = Page::Library(Kind::World);
         form.library.open_form(Kind::World, "w");
@@ -55,6 +59,7 @@ fn snapshots() {
             ("spotlight", spotlight),
             ("dialog", dialog),
             ("form", form),
+            ("rename", rename),
         ];
         for (name, mut chat) in screens {
             let pixels = frame(&mut gpu, &fonts, scheme, &mut |p, ui, view| {
@@ -87,6 +92,7 @@ fn frame(
         ui.begin(1.0, 10.0);
         let mut p = Painter::new(fonts, (&mut atlas, &mut images), &mut instances, 1.0, view, palette);
         draw(&mut p, &mut ui, view);
+        crate::titlebar::draw(&mut p, &mut ui, view, false);
         ui.end();
         // Pictures asked for decode here, as the app's workers would.
         for key in images.take_wanted() {

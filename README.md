@@ -58,8 +58,8 @@ cargo clippy --workspace --all-targets
 - **Stories**: Clicking a world (**Edit** opens its form) (Ctrl/Cmd+N opens the worlds) starts a session in it, which
   first asks who you play: your character's name, description and portrait, or one of your
   personas (**You** in the cast panel edits them later). **Begin** saves the story and lists it
-  in the sidebar. The **cast panel** beside the story (over it, in a narrow window; the header's
-  **Cast** button, with the faces of who is in the scene, shows and hides it) holds what the
+  in the sidebar. The **cast panel** beside the story (over it, in a narrow window; the panel
+  icon at the header's right shows and hides it) holds what the
   story is made of: the world's picture, the current scene (click it to change it yourself),
   **Memories** and the **Author's note**, who you play, and the cast, in the scene and
   elsewhere, each with a portrait and the first line of their description. Click a member to
@@ -167,10 +167,15 @@ cargo clippy --workspace --all-targets
   `/clear`, which deletes the open story and starts it over in the same world, cast and note.
 - **Emoji and CJK**: colour emoji (Twemoji), and Chinese, Japanese and Korean text through the
   operating system's fonts, with input-method (IME) support for typing them.
-- **Looks**: the sidebar and the cast panel sit on the window, the page floats between them on
-  a rounded canvas, and a story's world tints the top of it with its picture. Three schemes:
+- **Looks**: the app draws its own title bar in the scheme's colours (drag it to move the
+  window, double-click it to maximize; on Windows and Linux with its own minimize, maximize and
+  close buttons, and the window's edges resize it; macOS keeps its traffic lights). Below it the
+  sidebar and the cast panel sit on the window, and the page floats between them on a rounded
+  canvas; on a dark scheme a story's world tints the top of it with its picture. Three schemes:
   **Black** (the default), **White**, and **Amber**, a warm cream that is light but easy on the
   eyes, with little blue in it. Icons are Lucide's.
+- **Story titles**: a story is named after its first prompt; click its title in the header to
+  type another (Enter or a click elsewhere keeps it, Esc drops it).
 - **Settings**, in tabs: Appearance (Black, White and Amber schemes, reasoning display),
   Models (a **background model** for memory reviews, summaries and generated characters: a
   cheaper one saves money, and summaries stay on the story's model when it holds less

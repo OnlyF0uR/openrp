@@ -156,7 +156,9 @@ impl Chat {
             }
         }
 
-        let focus = ui.anim(id("composer-focus"), f32::from(u8::from(ui.focused && self.spotlight.is_none())));
+        // Spotlight, or the story's title being typed, has the keys instead.
+        let typing = ui.focused && self.spotlight.is_none() && self.title_edit.is_none();
+        let focus = ui.anim(id("composer-focus"), f32::from(u8::from(typing)));
         let lift = Rect::new(card.x + 8.0, card.y + 10.0, card.w - 16.0, card.h);
         p.shadow(lift, fade(t.shadow, 0.8), theme::RADIUS_LG, 28.0);
         p.bordered(card, t.surface, theme::RADIUS_LG, 1.0, mix(t.border_strong, t.border_focus, focus * 0.6));
@@ -187,7 +189,7 @@ impl Chat {
                 }
             }
         }
-        if ui.caret_visible() && (selection.is_empty() || preedit.is_some()) && self.spotlight.is_none() {
+        if ui.caret_visible() && (selection.is_empty() || preedit.is_some()) && typing {
             p.rect(Rect::new(origin.0 + caret_x - 1.0, origin.1 + caret_y + 3.0, 2.0, line_h - 6.0), t.accent, 0.0);
         }
         p.set_clip(clip);

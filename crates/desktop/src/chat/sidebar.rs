@@ -8,9 +8,8 @@ use super::{Chat, Menu, PRIMARY_KEY, Page, ago};
 use crate::app::Action;
 use crate::library::Kind;
 use crate::paint::{Painter, Rect, fade, mix};
-use crate::text::Style;
 use crate::theme;
-use crate::ui::{Ui, icon, id, logo};
+use crate::ui::{Ui, icon, id};
 
 /// Height of a row: navigation and sessions alike.
 const ROW_H: f32 = 32.0;
@@ -22,14 +21,8 @@ impl Chat {
         let t = p.theme;
         let width = area.w - 2.0 * INSET;
 
-        // macOS draws the traffic lights over our (transparent) title bar.
-        let top = if cfg!(target_os = "macos") { 40.0 } else { 14.0 };
-        logo(p, Rect::new(INSET + 6.0, top, 24.0, 24.0));
-        let brand = p.layout("OpenRP", Style::semibold(15.0), None);
-        p.text(&brand, INSET + 40.0, top + 12.0 - brand.height() * 0.5, t.text);
-
         // A story starts from a world: New story (Ctrl/Cmd+N) opens Worlds.
-        let new = Rect::new(INSET, top + 40.0, width, 36.0);
+        let new = Rect::new(INSET, area.y + 2.0, width, 36.0);
         if new_story(p, ui, new) {
             self.show(Page::Library(Kind::World));
         }
@@ -39,6 +32,9 @@ impl Chat {
         let search = (icon::SEARCH, "Search", Some(format!("{PRIMARY_KEY}+K")));
         if list_row(p, ui, row(row_y), id("search"), search, false) {
             self.open_spotlight();
+            // The click that opened it is spent: Spotlight would take it
+            // for one outside it, and close.
+            ui.released = false;
         }
         row_y += ROW_H + 2.0;
         let on_chat = self.page == Page::Chat;

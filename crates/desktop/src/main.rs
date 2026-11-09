@@ -31,6 +31,7 @@ mod settings;
 mod spotlight;
 mod text;
 mod theme;
+mod titlebar;
 mod ui;
 
 use std::process::ExitCode;

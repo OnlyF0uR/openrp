@@ -35,6 +35,7 @@ use crate::platform;
 use crate::settings::Provider;
 use crate::text::{Fonts, GlyphAtlas};
 use crate::theme::{Palette, Scheme};
+use crate::titlebar::{self, Command, Grab};
 use crate::ui::{Ui, copy};
 
 /// Length of the cross-fade when the colour scheme changes.
@@ -333,6 +334,10 @@ pub struct App {
     ime_area: Option<Rect>,
     /// Interface zoom in percent, on top of the display's scale.
     zoom: u16,
+    /// The title bar's close button was clicked: the app exits.
+    quit: bool,
+    /// When the title bar strip was last pressed, to maximize on a second press.
+    title_press: Option<f32>,
 }
 
 impl App {
@@ -357,7 +362,13 @@ impl App {
             .with_maximized(maximized && !cfg!(windows))
             .with_theme(Some(window_theme(scheme)))
             // Shown after the first frame so the user never sees a blank window.
-            .with_visible(false);
+            .with_visible(false)
+            // The app draws its own title bar (`titlebar.rs`), in the scheme's colours.
+            .with_decorations(!crate::titlebar::CUSTOM);
+        // Undecorated, a window still casts the system's shadow.
+        #[cfg(windows)]
+        let attributes =
+            winit::platform::windows::WindowAttributesExtWindows::with_undecorated_shadow(attributes, true);
         // Let the sidebar run under a transparent title bar on macOS.
         #[cfg(target_os = "macos")]
         let attributes = {
@@ -428,6 +439,8 @@ impl App {
             cursor: CursorIcon::Default,
             ime_area: None,
             zoom,
+            quit: false,
+            title_press: None,
         };
         app.ui.focused = true;
         if connected {
@@ -588,6 +601,12 @@ impl App {
         self.window.scale_factor() as f32 * f32::from(self.zoom) / 100.0
     }
 
+    /// The window's area in logical pixels.
+    fn view(&self) -> Rect {
+        let (scale, size) = (self.scale(), self.window.inner_size());
+        Rect::new(0.0, 0.0, size.width as f32 / scale, size.height as f32 / scale)
+    }
+
     fn save_config(&mut self) {
         self.writer.send(Job::SaveConfig(self.config.clone()));
     }
@@ -620,6 +639,9 @@ impl App {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::RedrawRequested => {
                 self.frame();
+                if self.quit {
+                    event_loop.exit();
+                }
                 return;
             }
             WindowEvent::Resized(size) => self.renderer.resize(size.width, size.height),
@@ -631,7 +653,23 @@ impl App {
             WindowEvent::CursorLeft { .. } => self.ui.mouse = (f32::MIN, f32::MIN),
             WindowEvent::MouseInput { state, button: MouseButton::Left, .. } => {
                 if state == ElementState::Pressed {
-                    self.ui.press(self.start.elapsed().as_secs_f32());
+                    let now = self.start.elapsed().as_secs_f32();
+                    // The title bar and the window's edges take the press
+                    // themselves; the page never sees it.
+                    match titlebar::grab(self.view(), self.ui.mouse, self.window.is_maximized()) {
+                        Some(Grab::Resize(direction)) => {
+                            let _ = self.window.drag_resize_window(direction);
+                        }
+                        Some(Grab::Move) if self.title_press.is_some_and(|at| now - at < 0.4) => {
+                            self.title_press = None;
+                            self.window.set_maximized(!self.window.is_maximized());
+                        }
+                        Some(Grab::Move) => {
+                            self.title_press = Some(now);
+                            let _ = self.window.drag_window();
+                        }
+                        None => self.ui.press(now),
+                    }
                 } else {
                     self.ui.down = false;
                     self.ui.released = true;
@@ -1039,9 +1077,10 @@ impl App {
         };
 
         let scale = self.scale();
-        let size = self.window.inner_size();
-        let view = Rect::new(0.0, 0.0, size.width as f32 / scale, size.height as f32 / scale);
+        let view = self.view();
+        let maximized = self.window.is_maximized();
         let mut actions = Vec::new();
+        let mut command = None;
         // A second pass runs only if the glyph atlas overflowed mid-frame.
         for _ in 0..2 {
             let mut painter = Painter::new(
@@ -1056,6 +1095,7 @@ impl App {
                 Screen::Login(login) => login.draw(&mut painter, &mut self.ui, view, &mut actions),
                 Screen::Chat(chat) => chat.draw(&mut painter, &mut self.ui, view, self.scheme, &mut actions),
             }
+            command = command.or(titlebar::draw(&mut painter, &mut self.ui, view, maximized));
             if !painter.atlas_full {
                 break;
             }
@@ -1065,6 +1105,12 @@ impl App {
             self.ui.end();
         }
 
+        match command {
+            Some(Command::Minimize) => self.window.set_minimized(true),
+            Some(Command::Maximize) => self.window.set_maximized(!maximized),
+            Some(Command::Close) => self.quit = true,
+            None => {}
+        }
         let drawn = self.renderer.render(
             &self.instances,
             &mut self.atlas.uploads,

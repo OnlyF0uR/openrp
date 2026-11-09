@@ -356,6 +356,8 @@ pub const RADIUS_LG: f32 = 16.0;
 pub const CANVAS_RADIUS: f32 = 12.0;
 /// Space between the window's edge and the canvas.
 pub const GAP: f32 = 8.0;
+/// Height of the title bar strip along the window's top.
+pub const TITLE_HEIGHT: f32 = 36.0;
 /// Sidebar width.
 pub const SIDEBAR_WIDTH: f32 = 260.0;
 /// Height of the header bar above the main area.

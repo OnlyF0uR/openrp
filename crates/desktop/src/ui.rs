@@ -196,8 +196,14 @@ pub mod icon {
     pub const SEARCH: char = '\u{e151}';
     /// A cog: settings.
     pub const SETTINGS: char = '\u{e154}';
+    /// A panel on the right with an arrow in: hide the cast panel.
+    pub const PANEL_CLOSE: char = '\u{e432}';
+    /// A panel on the right with an arrow out: show the cast panel.
+    pub const PANEL_OPEN: char = '\u{e434}';
     /// Two people: characters.
     pub const USERS: char = '\u{e1a4}';
+    /// A cross: close.
+    pub const X: char = '\u{e1b2}';
     /// A wand with sparkles: the AI writes it.
     pub const WAND: char = '\u{e357}';
 }
@@ -382,6 +388,9 @@ mod tests {
             icon::SETTINGS,
             icon::USERS,
             icon::WAND,
+            icon::PANEL_CLOSE,
+            icon::PANEL_OPEN,
+            icon::X,
         ];
         for glyph in all {
             assert_eq!(fonts.resolve(FontId::ICON, glyph, None).0, FontId::ICON, "{:x}", u32::from(glyph));

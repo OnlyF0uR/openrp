@@ -26,7 +26,7 @@ use crate::library::{Kind, Record, portrait};
 use crate::paint::{Painter, Rect, fade, mix};
 use crate::text::Style;
 use crate::theme;
-use crate::ui::{ButtonStyle, Ui, button, id};
+use crate::ui::{ButtonStyle, Ui, button, icon, icon_button, id};
 
 /// Width of the cast panel.
 const PANEL_W: f32 = 300.0;
@@ -42,8 +42,6 @@ const FOOTER_H: f32 = 64.0;
 const BANNER_H: f32 = 132.0;
 /// Most lines of the scene the panel shows.
 const SCENE_LINES: f32 = 5.0;
-/// Faces in the header's Cast button.
-const STACK: usize = 4;
 
 /// What was clicked on a cast member's row.
 #[derive(Clone, Copy)]
@@ -233,7 +231,7 @@ impl Chat {
             return None;
         }
         let docked = area.w - PANEL_W >= STAGE_MIN;
-        let (top, bottom) = (area.y + theme::GAP, area.bottom() - theme::GAP);
+        let (top, bottom) = (area.y, area.bottom() - theme::GAP);
         let rect = if docked {
             Rect::new(area.right() - PANEL_W, top, PANEL_W, bottom - top)
         } else {
@@ -251,10 +249,9 @@ impl Chat {
         }
     }
 
-    /// Draws the header's Cast button ending at `right` in `bar`: the faces
-    /// of who is in the scene, overlapping, and how many are cast. `open`
-    /// while the panel shows. Returns whether it was clicked; `None`
-    /// outside a story.
+    /// Draws the header's button that shows or hides the cast panel,
+    /// ending at `right` in `bar`; `open` while the panel shows. Returns it
+    /// and whether it was clicked; `None` outside a story.
     pub(super) fn draw_cast_button(
         &mut self,
         p: &mut Painter,
@@ -262,53 +259,13 @@ impl Chat {
         (bar, right): (Rect, f32),
         open: bool,
     ) -> Option<(Rect, bool)> {
-        let t = p.theme;
         let conversation = self.conversations.iter().find(|c| c.id == self.current)?;
         if conversation.world.is_none() || conversation.load != Load::Loaded {
             return None;
         }
-        let present: Vec<(String, String, String)> = conversation
-            .cast
-            .iter()
-            .filter(|m| m.present)
-            .take(STACK)
-            .map(|m| (m.name.clone(), m.portrait.clone(), m.color.clone()))
-            .collect();
-        let label = match conversation.cast.len() {
-            0 => "Cast".to_owned(),
-            n => format!("Cast · {n}"),
-        };
-        let label = p.layout(&label, theme::LABEL, None);
-        let face = 22.0;
-        let faces_w = if present.is_empty() { 0.0 } else { face + (present.len() - 1) as f32 * (face - 8.0) + 8.0 };
-        let width = faces_w + label.width() + 22.0;
-        let rect = Rect::new(right - width, bar.y + (bar.h - 30.0) * 0.5, width, 30.0);
-        let hovered = ui.hovered(rect);
-        let hover = ui.anim(id("cast-button"), f32::from(u8::from(hovered)));
-        let fill = if open { mix(t.active, t.hover, hover) } else { fade(t.hover, hover) };
-        p.rect(rect, fill, 15.0);
-        let mut x = rect.x + 10.0;
-        for (name, image, color) in &present {
-            let disc = Rect::new(x, rect.y + (rect.h - face) * 0.5, face, face);
-            // A ring of the header's colour keeps overlapping faces apart.
-            p.rect(Rect::new(disc.x - 2.0, disc.y - 2.0, face + 4.0, face + 4.0), t.bg, face * 0.5 + 2.0);
-            let path = if image.is_empty() { None } else { self.library.portrait_path(image) };
-            portrait(p, path.as_deref(), (name, color), disc, face * 0.5);
-            x += face - 8.0;
-        }
-        if !present.is_empty() {
-            x += 8.0 + 8.0;
-        }
-        p.text(
-            &label,
-            x,
-            rect.y + (rect.h - label.height()) * 0.5,
-            mix(t.text_muted, t.text, hover.max(f32::from(u8::from(open)))),
-        );
-        if hovered {
-            ui.cursor = CursorIcon::Pointer;
-        }
-        Some((rect, ui.clicked(rect)))
+        let rect = Rect::new(right - 32.0, bar.y + (bar.h - 32.0) * 0.5, 32.0, 32.0);
+        let glyph = if open { icon::PANEL_CLOSE } else { icon::PANEL_OPEN };
+        Some((rect, icon_button(p, ui, rect, glyph, true)))
     }
 
     /// Draws the cast panel in `panel`, `docked` or not (see
@@ -806,12 +763,15 @@ mod tests {
         assert!(chat.cast_panel(wide).is_none(), "no story, no panel");
         chat.play("w".into());
         let (rect, docked) = chat.cast_panel(wide).unwrap();
-        assert!(docked && (rect.right() - wide.right()).abs() < 0.5 && (rect.y - theme::GAP).abs() < 0.5);
+        assert!(docked && (rect.right() - wide.right()).abs() < 0.5 && (rect.y - wide.y).abs() < 0.5);
         assert!(chat.cast_panel(narrow).is_none(), "too narrow to dock: hidden until asked for");
         chat.toggle_cast(narrow);
         let (rect, docked) = chat.cast_panel(narrow).unwrap();
         assert!(!docked, "then it floats");
-        assert!(rect.right() < narrow.right() && rect.y > theme::HEADER_HEIGHT, "over the canvas, below its header");
+        assert!(
+            rect.right() < narrow.right() && rect.y >= narrow.y + theme::HEADER_HEIGHT,
+            "over the canvas, below its header"
+        );
         chat.toggle_cast(wide);
         assert!(chat.cast_panel(wide).is_none(), "hidden by the user, it stays hidden");
     }

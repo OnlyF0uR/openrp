@@ -34,6 +34,7 @@ use openrp_core::{
 };
 use winit::event::KeyEvent;
 use winit::keyboard::{Key, ModifiersState, NamedKey};
+use winit::window::CursorIcon;
 
 use crate::app::Action;
 use crate::doc::Doc;
@@ -44,7 +45,7 @@ use crate::settings::{Provider, SettingsView, Totals};
 use crate::spotlight::{Outcome, Pick, Spotlight};
 use crate::text::TextLayout;
 use crate::theme::{self, Scheme};
-use crate::ui::{Ui, copy, edit_key, move_line};
+use crate::ui::{Ui, copy, edit_key, id, move_line};
 
 use composer::Command;
 pub use dialog::GenerateJob;
@@ -55,6 +56,9 @@ pub use tools::{generator_tool, review_tool, tool_definitions};
 
 /// Model used until the user picks one.
 pub const DEFAULT_MODEL: &str = "claude-sonnet-5.5";
+/// Longest a story's title gets, typed or taken from its first prompt.
+const TITLE_CHARS: usize = 80;
+
 /// Name of the platform's primary shortcut modifier.
 const PRIMARY_KEY: &str = if cfg!(target_os = "macos") { "Cmd" } else { "Ctrl" };
 
@@ -576,6 +580,8 @@ pub struct Chat {
     selecting: bool,
     /// Text being composed by an input method, and its caret.
     preedit: Option<(String, Option<(usize, usize)>)>,
+    /// The story whose title is being typed in the header, and the field.
+    title_edit: Option<(u64, Editor)>,
     /// Composer caret rectangle, for placing the input method's window.
     caret_rect: Option<Rect>,
     models: Vec<Model>,
@@ -667,6 +673,7 @@ impl Chat {
             composer_scroll: 0.0,
             selecting: false,
             preedit: None,
+            title_edit: None,
             caret_rect: None,
             models: Vec::new(),
             models_error: None,
@@ -1140,7 +1147,7 @@ impl Chat {
                 ("", Some(ooc)) => ooc,
                 (said, _) => said,
             };
-            conversation.title = said.lines().next().unwrap_or_default().chars().take(80).collect();
+            conversation.title = said.lines().next().unwrap_or_default().chars().take(TITLE_CHARS).collect();
         }
         conversation.entries.push(Entry::new(user_id, StoredMessage::new(Role::User, text)));
         let id = conversation.id;
@@ -1256,6 +1263,10 @@ impl Chat {
             spotlight.insert(text);
             return;
         }
+        if let Some((_, editor)) = &mut self.title_edit {
+            editor.insert(text);
+            return;
+        }
         if self.menu.is_some_and(Menu::searchable) {
             self.menu_query.insert(text);
             (self.menu_pick, self.menu_keyed, self.menu_scroll) = (0, true, 0.0);
@@ -1367,6 +1378,15 @@ impl Chat {
         if self.menu_key(event, mods, cb, actions) {
             return;
         }
+        // So does the story's title, while it is typed in the header.
+        if let Some((_, editor)) = &mut self.title_edit {
+            match &event.logical_key {
+                Key::Named(NamedKey::Enter) => self.commit_title(actions),
+                Key::Named(NamedKey::Escape) => self.title_edit = None,
+                _ => _ = edit_key(editor, event, mods, cb),
+            }
+            return;
+        }
         let is = |c: &str, ch: &str| c.eq_ignore_ascii_case(ch);
         let commands = self.commands();
         match &event.logical_key {
@@ -1436,15 +1456,20 @@ impl Chat {
 
     /// Draws the screen.
     pub fn draw(&mut self, p: &mut Painter, ui: &mut Ui, view: Rect, scheme: Scheme, actions: &mut Vec<Action>) {
-        // The sidebar and the cast panel sit on the window; the page floats
-        // between them on a rounded canvas.
-        let sidebar = Rect::new(0.0, 0.0, theme::SIDEBAR_WIDTH, view.h);
-        let area = Rect::new(sidebar.w, 0.0, view.w - sidebar.w, view.h);
+        // Under the title bar, the sidebar and the cast panel sit on the
+        // window; the page floats between them on a rounded canvas.
+        let top = theme::TITLE_HEIGHT;
+        let sidebar = Rect::new(0.0, top, theme::SIDEBAR_WIDTH, view.h - top);
+        let area = Rect::new(sidebar.w, top, view.w - sidebar.w, view.h - top);
         let docked = match self.page {
             Page::Chat => self.cast_panel(area).filter(|(_, docked)| *docked).map(|(rect, _)| rect),
             _ => None,
         };
         let main = canvas(area, docked);
+        // A title being typed is kept once its story is left.
+        if self.title_edit.as_ref().is_some_and(|(id, _)| *id != self.current || self.page != Page::Chat) {
+            self.commit_title(actions);
+        }
         p.rect(view, p.theme.panel, 0.0);
         p.bordered(main, p.theme.bg, theme::CANVAS_RADIUS, 1.0, p.theme.border);
 
@@ -1506,7 +1531,7 @@ impl Chat {
                 } else if ui.blocker.is_none() {
                     ui.blocker = floating;
                 }
-                if self.draw_header(p, ui, main, panel.is_some()) {
+                if self.draw_header(p, ui, main, panel.is_some(), actions) {
                     self.toggle_cast(area);
                 }
                 let stage = main;
@@ -1583,15 +1608,24 @@ impl Chat {
     /// Title bar of the chat area: session title, cost and, in a story, the
     /// Cast button (`cast_open` while the panel shows), over a wash of the
     /// world's picture. Returns whether the Cast button was clicked.
-    fn draw_header(&mut self, p: &mut Painter, ui: &mut Ui, main: Rect, cast_open: bool) -> bool {
+    fn draw_header(
+        &mut self,
+        p: &mut Painter,
+        ui: &mut Ui,
+        main: Rect,
+        cast_open: bool,
+        actions: &mut Vec<Action>,
+    ) -> bool {
         let t = p.theme;
         let bar = Rect::new(main.x, main.y, main.w, theme::HEADER_HEIGHT);
         let conversation = self.current();
         let (tokens, cost) = (conversation.tokens(), conversation.cost());
         let (world, title) = (conversation.world.clone(), conversation.title.clone());
         let world = world.map(|id| self.library.get(Kind::World, &id));
-        // The world's colours wash the top of the canvas and fade into it.
-        if let Some(path) = world.flatten().and_then(|w| self.library.portrait_path(&w.portrait)) {
+        // The world's colours wash the top of the canvas and fade into it;
+        // on a light page a tint only muddies it.
+        let picture = world.flatten().and_then(|w| self.library.portrait_path(&w.portrait));
+        if let Some(path) = picture.filter(|_| !t.is_light()) {
             // Inside the canvas's outline, its top corners rounded like the
             // canvas; the lower ones fall below the clip, where it has faded.
             let radius = theme::CANVAS_RADIUS - 1.0;
@@ -1625,7 +1659,7 @@ impl Chat {
             right -= 20.0;
         }
         // The world, then what this story is about: "Panem / The reaping".
-        let x = bar.x + 20.0;
+        let mut x = bar.x + 20.0;
         // Draws `text` at `x`, cut to `max`; returns where it ends.
         let crumb = |p: &mut Painter, text: &str, x: f32, max: f32, color| {
             let mut layout = p.layout(text, theme::LABEL, None);
@@ -1633,17 +1667,98 @@ impl Chat {
             p.text(&layout, x, bar.y + (bar.h - layout.height()) * 0.5, color);
             x + layout.width()
         };
-        match (world, title.is_empty()) {
-            (Some(world), false) => {
-                let x = crumb(p, &world, x, (right - x) * 0.4, t.text_muted) + 10.0;
-                let x = crumb(p, "/", x, 20.0, t.text_faint) + 10.0;
-                crumb(p, &title, x, right - x, t.text);
-            }
-            (Some(only), true) => _ = crumb(p, &only, x, right - x, t.text),
-            (None, false) => _ = crumb(p, &title, x, right - x, t.text),
-            (None, true) => {}
+        if let Some(world) = &world {
+            x = crumb(p, world, x, (right - x) * 0.4, t.text_muted) + 10.0;
+            x = crumb(p, "/", x, 20.0, t.text_faint) + 10.0;
+        }
+        if world.is_some() || !title.is_empty() {
+            self.draw_title(p, ui, (bar, x, right), &title, actions);
         }
         toggled
+    }
+
+    /// The story's title in the header `bar`, from `x` to `right`: a click
+    /// turns it into a field to type a new one in, which Enter or a click
+    /// elsewhere keeps and Esc drops.
+    fn draw_title(
+        &mut self,
+        p: &mut Painter,
+        ui: &mut Ui,
+        (bar, x, right): (Rect, f32, f32),
+        title: &str,
+        actions: &mut Vec<Action>,
+    ) {
+        let t = p.theme;
+        let mid = bar.y + bar.h * 0.5;
+        let current = self.current;
+        let Some((_, editor)) = self.title_edit.as_mut().filter(|(id, _)| *id == current) else {
+            let shown = if title.is_empty() { "Untitled" } else { title };
+            let mut layout = p.layout(shown, theme::LABEL, None);
+            layout.truncate(p.fonts, (right - x).max(20.0));
+            let rect = Rect::new(x - 8.0, mid - 15.0, layout.width() + 16.0, 30.0);
+            let hovered = ui.hovered(rect);
+            let hover = ui.anim(id("story-title"), f32::from(u8::from(hovered)));
+            p.rect(rect, fade(t.hover, hover), theme::RADIUS_SM);
+            p.text(&layout, x, mid - layout.height() * 0.5, if title.is_empty() { t.text_faint } else { t.text });
+            if hovered {
+                ui.cursor = CursorIcon::Text;
+                if ui.clicked(rect) {
+                    let mut editor = Editor::restricted(TITLE_CHARS, |c| !c.is_control());
+                    editor.insert(title);
+                    editor.select_all();
+                    self.title_edit = Some((current, editor));
+                    ui.last_edit = ui.time;
+                }
+            }
+            return;
+        };
+        let layout = p.layout(editor.text(), theme::LABEL, None);
+        let width = (layout.width() + 40.0).clamp(180.0, (right - x + 8.0).max(180.0));
+        let field = Rect::new(x - 8.0, mid - 15.0, width, 30.0);
+        p.bordered(field, t.surface, theme::RADIUS_SM, 1.0, t.border_focus);
+        let origin = (x, mid - layout.height() * 0.5);
+        let saved = p.push_clip(Rect::new(field.x + 2.0, field.y, field.w - 4.0, field.h));
+        let selection = editor.selection();
+        for (x0, x1, y) in layout.selection_spans(selection.start, selection.end, false) {
+            p.rect(Rect::new(origin.0 + x0, origin.1 + y, x1 - x0, layout.line_height()), t.selection, 2.0);
+        }
+        if editor.text().is_empty() {
+            p.label("Name this story", theme::LABEL, origin.0, origin.1, t.text_faint);
+        } else {
+            p.text(&layout, origin.0, origin.1, t.text);
+        }
+        if ui.caret_visible() && selection.is_empty() {
+            let (cx, cy) = layout.caret(editor.cursor());
+            p.rect(Rect::new(origin.0 + cx - 1.0, origin.1 + cy + 3.0, 2.0, layout.line_height() - 6.0), t.accent, 0.0);
+        }
+        p.set_clip(saved);
+        if ui.hovered(field) {
+            ui.cursor = CursorIcon::Text;
+        }
+        if ui.pressed && field.contains(ui.mouse) {
+            editor.set_cursor(layout.hit(ui.mouse.0 - origin.0, 0.0), ui.mods.shift_key());
+            if ui.clicks == 2 {
+                editor.select_word();
+            }
+            ui.last_edit = ui.time;
+        } else if ui.pressed {
+            self.commit_title(actions);
+        }
+    }
+
+    /// Keeps the title typed in the header, with its spaces tidied; saved
+    /// at once for a story already saved.
+    fn commit_title(&mut self, actions: &mut Vec<Action>) {
+        let Some((id, editor)) = self.title_edit.take() else { return };
+        let title = editor.text().split_whitespace().collect::<Vec<_>>().join(" ");
+        let Some(conversation) = self.find(id) else { return };
+        if conversation.title == title {
+            return;
+        }
+        conversation.title = title;
+        if !conversation.is_fresh() && conversation.load == Load::Loaded {
+            actions.push(Action::SaveSession(conversation.to_session()));
+        }
     }
 
     /// Column holding messages and the composer inside `main`.
@@ -1654,11 +1769,11 @@ impl Chat {
 }
 
 /// The canvas the page floats on in `area` (the window right of the
-/// sidebar): inset from the window's edges, and reaching up to a `docked`
-/// cast panel, which keeps its own margin.
+/// sidebar, below the title bar): inset from the window's edges, and
+/// reaching up to a `docked` cast panel, which keeps its own margin.
 fn canvas(area: Rect, docked: Option<Rect>) -> Rect {
     let right = docked.map_or(area.right() - theme::GAP, |panel| panel.x);
-    Rect::new(area.x, area.y + theme::GAP, right - area.x, area.h - 2.0 * theme::GAP)
+    Rect::new(area.x, area.y, right - area.x, area.h - theme::GAP)
 }
 
 /// Rounds the canvas's corners again over whatever was drawn into them.
@@ -1860,6 +1975,30 @@ mod tests {
             let ms = chat.current().entries.last().map(|e| e.message.reasoning_ms);
             assert_eq!(ms.is_some_and(|ms| ms >= 3000), !reasoning.is_empty(), "reasoning {reasoning:?}");
         }
+    }
+
+    #[test]
+    fn titles_are_typed_in_place() {
+        let mut chat = new_chat();
+        let job = start(&mut chat, "Hello there.");
+        finish_saying(&mut chat, &job, "Hi.", Completion::default());
+        let id = chat.current;
+        let typed = |text: &str| {
+            let mut editor = Editor::default();
+            editor.insert(text);
+            Some((id, editor))
+        };
+        chat.title_edit = typed("  The   long night ");
+        let mut actions = Vec::new();
+        chat.commit_title(&mut actions);
+        assert_eq!(chat.current().title, "The long night", "spaces tidied");
+        assert!(matches!(&actions[..], [Action::SaveSession(s)] if s.title == "The long night"), "saved at once");
+        assert!(chat.title_edit.is_none());
+
+        chat.title_edit = typed("The long night");
+        let mut actions = Vec::new();
+        chat.commit_title(&mut actions);
+        assert!(actions.is_empty(), "unchanged, nothing to save");
     }
 
     #[test]
