@@ -133,6 +133,15 @@ impl Fields {
         self.focus = index.min(self.editors.len() - 1);
     }
 
+    /// Focuses field `index` with `range` (bytes) of its text selected, so
+    /// typing or pasting replaces it.
+    pub fn select(&mut self, index: usize, range: std::ops::Range<usize>) {
+        self.focus(index);
+        let editor = &mut self.editors[self.focus];
+        editor.set_cursor(range.start, false);
+        editor.set_cursor(range.end, true);
+    }
+
     /// The editor of field `index`.
     #[cfg(test)]
     pub fn editor(&mut self, index: usize) -> &mut Editor {

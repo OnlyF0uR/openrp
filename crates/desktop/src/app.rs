@@ -249,6 +249,8 @@ pub enum Action {
     },
     /// Forget the provider's key and go back to the connect screen.
     ForgetKey,
+    /// Forget a provider used before (not the one in use), with its key.
+    ForgetProvider(String),
 }
 
 /// Failure to start the app.
@@ -279,8 +281,8 @@ impl std::error::Error for StartupError {
 }
 
 enum Screen {
-    Login(Login),
-    // Boxed: the chat screen is far larger than the login screen.
+    // Both boxed, so the enum is a pointer wide.
+    Login(Box<Login>),
     Chat(Box<Chat>),
 }
 
@@ -413,7 +415,7 @@ impl App {
             ui: Ui::default(),
             start: now,
             last_frame: now,
-            screen: Screen::Login(Login::new(None, "")),
+            screen: Screen::Login(Box::new(Login::new(None, "", saved(&config)))),
             config,
             client: client.unwrap_or_default(),
             writer: Writer::start(sessions_dir.clone(), report),
@@ -539,18 +541,15 @@ impl App {
             chat.cancel_all();
         }
         self.client = Client::default();
-        self.screen = Screen::Login(Login::new(reason, &base_url));
+        self.screen = Screen::Login(Box::new(Login::new(reason, &base_url, saved(&self.config))));
     }
 
-    /// Saves `base_url` and `api_key` (`None` keeps the saved key if it was
-    /// for the same address) and talks to that provider from now on: the
-    /// chat lists its models.
+    /// Saves `base_url` and `api_key` (`None` keeps the key saved for that
+    /// address, if any) and talks to that provider from now on: the chat
+    /// lists its models. The provider it leaves is kept to switch back to.
     fn connect(&mut self, base_url: String, api_key: Option<String>) {
-        // A saved key only ever goes to the address it was saved for.
-        let saved = self.config.api_key.take().filter(|_| self.config.base_url.as_deref() == Some(base_url.as_str()));
-        self.config.api_key = api_key.or(saved);
-        self.client = Client::new(&base_url, self.config.api_key.clone());
-        self.config.base_url = Some(base_url);
+        self.config.use_provider(base_url, api_key);
+        self.client = client_for(&self.config).unwrap_or_default();
         self.save_config();
         self.connection += 1;
         self.models_failures = 0;
@@ -806,7 +805,7 @@ impl App {
             // ponytail: like the generator, not streamed; the chat gives up
             // on one that takes too long, and reads its turns again next time.
             Action::ReviewMemories(job) => self.spawn(move |client, _| {
-                let (name, description, parameters) = chat::remember_tool();
+                let (name, description, parameters) = chat::review_tool();
                 let request = ResponseRequest {
                     model: &job.model,
                     instructions: Some(&job.instructions),
@@ -982,6 +981,10 @@ impl App {
                 if !self.refuse_switch() {
                     self.forget_key(None);
                 }
+            }
+            Action::ForgetProvider(base_url) => {
+                self.config.providers.retain(|(url, _)| *url != base_url);
+                self.save_config();
             }
         }
     }
@@ -1202,7 +1205,16 @@ fn client_for(config: &Config) -> Option<Client> {
 
 /// What the settings page shows of the provider in `config`.
 fn provider(config: &Config) -> Provider {
-    Provider { base_url: config.base_url.clone().unwrap_or_default(), has_key: config.api_key.is_some() }
+    Provider {
+        base_url: config.base_url.clone().unwrap_or_default(),
+        has_key: config.api_key.is_some(),
+        saved: saved(config),
+    }
+}
+
+/// Addresses of the providers used before, latest first; never their keys.
+fn saved(config: &Config) -> Vec<String> {
+    config.providers.iter().map(|(url, _)| url.clone()).collect()
 }
 
 /// Logical size and maximized state of the window from the config's

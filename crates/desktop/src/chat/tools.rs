@@ -2,7 +2,7 @@
 //! must call them:
 //!
 //! * `speak`: everything characters say and do in a reply, as `messages`
-//!   of (character, action, text), one per character, after an `introduce`
+//!   of (character, action, text), in order, after an `introduce`
 //!   list that casts newcomers with a description in the same call (a
 //!   required field: models skip a separate tool far more often). One call
 //!   can hold several speakers, so a scene where three characters react
@@ -28,8 +28,8 @@
 //! its only tool is `create_character` (see [`generator_prompt`]).
 //!
 //! Both run instantly on the UI thread: they only read or change the story.
-//! A reply shows as [`Part`]s: one bubble per character (whatever the model
-//! sent, a character's messages merge into one) and short notes for scene
+//! A reply shows as [`Part`]s: a bubble per message (a character's messages
+//! in a row share one) and short notes for scene
 //! changes. They update while the model writes them, from arguments that
 //! are still incomplete JSON. Once the calls ran, notes for what they
 //! really changed (arrivals, departures, new memories) come from the
@@ -54,8 +54,7 @@ pub const REMEMBER: &str = "remember";
 /// Longest a memory may be, in characters; longer ones are cut.
 const MEMORY_LIMIT: usize = 400;
 /// How every tool that makes a character asks for their name.
-const NAME: &str = "Their personal name, fitting the world, e.g. \"Bram Holloway\": one person's, never a role (\"Bartender\", \
-                    \"Guard 2\") or a group (\"Royal Guards\", \"Government\").";
+const NAME: &str = "A personal name fitting the world, e.g. \"Bram Holloway\". Never a role (\"Bartender\", \"Guard 2\") or a group (\"Royal Guards\").";
 
 /// Every tool as (name, description, JSON Schema of its arguments).
 #[must_use]
@@ -63,26 +62,21 @@ pub fn tool_definitions() -> Vec<(&'static str, &'static str, Value)> {
     vec![
         (
             SPEAK,
-            "Tell the story through the characters: everything they say and do this turn, in one call, with one message per \
-             responding character. Only characters in the scene take part, never the user's character: whoever the user \
-             addresses, and others present who would react. There is no narrator and no narration: what happens is shown only \
-             through the characters' words and actions. Every character is one named individual: a group or institution speaks \
-             through one person who stands for it. Bring in someone new only when the user refers to a person who fits no one in \
-             the cast, or no one is in the scene; they must then be in introduce, with a description.",
+            "Everything the characters say and do this turn, in order. The only way to show the user anything.",
             json!({
                 "type": "object",
                 "properties": {
                     "scene": {
                         "type": "string",
-                        "description": "Only when the scene is not set yet or changes this turn: where the characters are now and what it is like there (place, time of day, mood, weather), e.g. \"Peeta's kitchen, before dawn; warm bread, rain on the windows\". Empty otherwise."
+                        "description": "Where the characters are and what it is like there (place, time of day, mood, weather), e.g. \"Peeta's kitchen, before dawn; warm bread, rain on the windows\". Only when the scene is unset or changes this turn; empty otherwise."
                     },
                     "introduce": {
                         "type": "array",
-                        "description": "Every character in these lines who is not in the cast yet, described: only a person the user refers to who fits no one in the cast, or the first character when no one is in the scene. Each is one individual. Usually empty.",
+                        "description": "Newcomers who act in messages and are not in the cast yet, each described. Usually empty.",
                         "items": {
                             "type": "object",
                             "properties": {
-                                "name": { "type": "string", "description": format!("{NAME} Exactly as used in the lines.") },
+                                "name": { "type": "string", "description": format!("{NAME} Exactly as in messages.") },
                                 "description": { "type": "string", "description": "Who they are: role, personality, appearance, how they speak." }
                             },
                             "required": ["name", "description"]
@@ -90,20 +84,20 @@ pub fn tool_definitions() -> Vec<(&'static str, &'static str, Value)> {
                     },
                     "messages": {
                         "type": "array",
-                        "description": "One message per responding character, in the order they respond. Each character appears at most once: everything they say and do this turn goes in their one message.",
+                        "description": "What the characters say and do, in the order it happens.",
                         "items": {
                             "type": "object",
                             "properties": {
-                                "character": { "type": "string", "description": "Who responds: one person's name from the cast in the scene, or one introduced above." },
-                                "action": { "type": "string", "description": "What they do as they respond, e.g. \"lowers her bow, eyes on the treeline\". May be empty." },
-                                "text": { "type": "string", "description": "Exactly what they say, without quotation marks. A short action between their words goes in *asterisks*, e.g. \"Stay back. *She steps closer.* I mean it.\" Empty when they only act." }
+                                "character": { "type": "string", "description": "Their name in the cast, or as in introduce." },
+                                "action": { "type": "string", "description": "What they do, e.g. \"lowers her bow, eyes on the treeline\". May be empty." },
+                                "text": { "type": "string", "description": "Exactly what they say, without quotation marks. A short action between words goes in *asterisks*, e.g. \"Stay back. *She steps closer.* I mean it.\" Empty when they only act." }
                             },
                             "required": ["character", "text"]
                         }
                     },
                     "leave": {
                         "type": "array",
-                        "description": "Cast members who leave the scene this turn: they walk off, or stay behind when the scene moves on. Usually empty.",
+                        "description": "Cast members who leave the scene this turn. Usually empty.",
                         "items": { "type": "string" }
                     }
                 },
@@ -112,10 +106,8 @@ pub fn tool_definitions() -> Vec<(&'static str, &'static str, Value)> {
         ),
         (
             CREATE_CHARACTER,
-            "Add a character to this story's cast, with a description: someone the user refers to who is not acting this turn \
-             (for a newcomer who acts now, use speak's introduce), or to describe a cast member who has no description yet. Each \
-             character is one individual, never a group, institution or system. Never for characters the user has not referred \
-             to, nor for anyone the cast already has under another name or role, nor for the user's character.",
+            "Add someone to this story's cast who does not act this turn (a newcomer who acts goes in speak's introduce), or \
+             describe a cast member who has no description. Never the user's character or someone already in the cast.",
             json!({
                 "type": "object",
                 "properties": {
@@ -128,15 +120,14 @@ pub fn tool_definitions() -> Vec<(&'static str, &'static str, Value)> {
         ),
         (
             UPDATE_CHARACTER,
-            "Change a cast member when the story changes them for good: a new name (they reveal their real name, take a title, \
-             or the user calls them something else) or a description that no longer fits (a lasting change in role, appearance \
-             or personality). Their old name keeps meaning them. Never for the user's character, and not for passing moods.",
+            "Record a lasting change to a cast member: a new name (the old one keeps meaning them) or a new description. Never \
+             for the user's character or a passing mood.",
             json!({
                 "type": "object",
                 "properties": {
-                    "character": { "type": "string", "description": "Who: their name in the cast." },
-                    "name": { "type": "string", "description": "Their new name, if it changes. Empty otherwise." },
-                    "description": { "type": "string", "description": "Their whole new description, if it changes: everything that still holds, with the change. Empty otherwise." }
+                    "character": { "type": "string", "description": "Their name in the cast." },
+                    "name": { "type": "string", "description": "Their new name; empty if unchanged." },
+                    "description": { "type": "string", "description": "Their whole new description: everything that still holds, plus the change. Empty if unchanged." }
                 },
                 "required": ["character"]
             }),
@@ -145,15 +136,12 @@ pub fn tool_definitions() -> Vec<(&'static str, &'static str, Value)> {
     ]
 }
 
-/// The memory tool as (name, description, JSON Schema of its arguments);
-/// the memory review is offered it alone.
-#[must_use]
-pub fn remember_tool() -> (&'static str, &'static str, Value) {
+/// The memory tool as (name, description, JSON Schema of its arguments).
+fn remember_tool() -> (&'static str, &'static str, Value) {
     (
         REMEMBER,
-        "Keep facts the story must not forget, in its memories (shown to you in every request, even after the conversation \
-         is summarised): promises, secrets revealed, decisions, injuries, how relationships changed, what someone now owns or \
-         knows. Call it in the same reply as speak, only for what matters later, never for what the memories already hold.",
+        "Add facts the story must not forget to its memories: promises, secrets revealed, decisions, injuries, changed \
+         relationships, what someone now owns or knows. Only what matters later and is not in the memories yet.",
         json!({
             "type": "object",
             "properties": {
@@ -164,6 +152,32 @@ pub fn remember_tool() -> (&'static str, &'static str, Value) {
                 }
             },
             "required": ["memories"]
+        }),
+    )
+}
+
+/// The memory review's only tool, as (name, description, JSON Schema): it
+/// drops memories by number and adds new ones (see [`revise`]).
+#[must_use]
+pub fn review_tool() -> (&'static str, &'static str, Value) {
+    (
+        REMEMBER,
+        "Revise the story's memories.",
+        json!({
+            "type": "object",
+            "properties": {
+                "forget": {
+                    "type": "array",
+                    "description": "Numbers of the memories to drop: no longer true, or rewritten or merged into memories.",
+                    "items": { "type": "integer" }
+                },
+                "memories": {
+                    "type": "array",
+                    "description": "New facts, and the rewritten or merged versions of those forgotten. Each short, self-contained and naming who it is about.",
+                    "items": { "type": "string" }
+                }
+            },
+            "required": ["forget", "memories"]
         }),
     )
 }
@@ -197,13 +211,12 @@ pub fn split_ooc(text: &str) -> (&str, Option<&str>) {
 }
 
 /// System instructions of the character generator, which can do one thing.
-const GENERATOR: &str = "You create characters for an interactive roleplay story. Your only job is to invent exactly one \
-    character from the user's request and return them with one create_character call; write nothing else, and never continue \
-    the story. The character is one individual person (or creature) with a personal name that fits the world; a request for a \
-    group or institution gets one person from it. \
-    the story. The description is for the AI that will play them: who they are, their role, personality, appearance, how they \
-    speak and what they want, in one short paragraph. Fit the world below, if any. Never create the user's character or anyone \
-    already in the cast.";
+const GENERATOR: &str = "You create characters for an interactive roleplay story. Invent exactly one character from the \
+    user's request and return them with one create_character call; write nothing else and never continue the story. The \
+    character is one individual (person or creature) with a personal name that fits the world; a request for a group or \
+    institution gets one person from it. The description is for the AI that will play them: who they are, their role, \
+    personality, appearance, how they speak and what they want, in one short paragraph. Fit the world below, if any. Never \
+    create the user's character or anyone already in the cast.";
 /// The request sent when the user asked for nobody in particular.
 pub const SURPRISE: &str = "Surprise me: someone this story would benefit from.";
 /// The request sent from the Characters page when the user asked for nobody
@@ -250,16 +263,18 @@ fn with_story(instructions: &str, world: Option<(&str, &str)>, player: Option<&s
 }
 
 /// System instructions of the memory review, which can do one thing.
-const REVIEWER: &str = "You keep the memory of an interactive roleplay story. Below is a transcript of its latest turns. Your only \
-    job is to call remember once with the facts from it that the story must not forget, and write nothing else: promises, secrets \
-    revealed, decisions, injuries, how relationships changed, what someone now owns or knows, where things stand between \
-    characters. Fold several small events into one fact when they belong together. Each fact is short, self-contained and names \
-    who it is about. Never repeat or rephrase a memory that exists already, and skip anything that is only scenery or passing \
-    dialogue. If nothing deserves keeping, call remember with an empty list.";
+const REVIEWER: &str = "You keep the memories of an interactive roleplay story: facts it must not forget. The user's message \
+    is a transcript of its latest turns; the memories kept so far are numbered below. Call remember once and write nothing else.\n\
+    - forget: the numbers of memories the transcript made untrue or outdated (an injury healed, a secret now known, a plan \
+    carried out), and of those you rewrite or merge.\n\
+    - memories: new facts from the transcript (promises, secrets revealed, decisions, injuries, changed relationships, what \
+    someone now owns or knows), and the rewritten or merged versions of the memories you forget.\n\
+    Keep under 30 memories: merge related ones. Skip scenery and passing dialogue. Leave memories that still hold untouched. If \
+    nothing changes, call remember with both lists empty.";
 
 /// The memory review's system prompt for a story in `world` (name and
 /// description), played by `player`, with these `cast` names and the
-/// `memories` it holds already.
+/// `memories` it holds already, numbered from 1 for [`revise`].
 #[must_use]
 pub fn reviewer_prompt(
     world: Option<(&str, &str)>,
@@ -269,9 +284,9 @@ pub fn reviewer_prompt(
 ) -> String {
     let mut prompt = with_story(REVIEWER, world, player, cast);
     if !memories.is_empty() {
-        prompt.push_str("\n\n# Memories already kept\n");
-        for memory in memories {
-            let _ = write!(prompt, "\n- {memory}");
+        prompt.push_str("\n\n# Memories kept so far\n");
+        for (n, memory) in memories.iter().enumerate() {
+            let _ = write!(prompt, "\n{}. {memory}", n + 1);
         }
     }
     prompt
@@ -466,12 +481,9 @@ pub fn run(
             // Whoever acts is in the scene; whoever is not cast and
             // described yet is not added half-finished, but reported.
             let (mut arrived, mut missing, mut renamed, mut for_player) = (Vec::new(), Vec::new(), Vec::new(), false);
-            let (mut seen, mut twice): (Vec<&str>, Vec<&str>) = (Vec::new(), Vec::new());
+            let mut seen: Vec<&str> = Vec::new();
             for speaker in speakers(&args) {
                 if seen.iter().any(|s| names::same(s, speaker)) {
-                    if !twice.iter().any(|s| names::same(s, speaker)) {
-                        twice.push(speaker);
-                    }
                     continue;
                 }
                 seen.push(speaker);
@@ -512,12 +524,6 @@ pub fn run(
             if for_player {
                 notes.push("Never speak or act for the user's character.".to_owned());
             }
-            if !twice.is_empty() {
-                let names = twice.join(", ");
-                notes.push(format!(
-                    "{names} had more than one message; they were shown as one. Give each character a single message."
-                ));
-            }
             if !missing.is_empty() {
                 notes.push(format!(
                     "Not in the cast with a description: {}. Add them with create_character now.",
@@ -534,20 +540,50 @@ pub fn run(
             update(cast, player, &field(&args, "character"), &field(&args, "name"), &field(&args, "description"))
         }
         REMEMBER => {
-            let mut kept = 0;
-            for memory in args.get("memories").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str)
-            {
-                let memory: String =
-                    memory.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(MEMORY_LIMIT).collect();
-                if !memory.is_empty() && !memories.iter().any(|m| m.eq_ignore_ascii_case(&memory)) {
-                    memories.push(memory);
-                    kept += 1;
-                }
+            if add_memories(&args, memories) == 0 {
+                "Nothing new to remember.".to_owned()
+            } else {
+                "Remembered.".to_owned()
             }
-            if kept == 0 { "Nothing new to remember.".to_owned() } else { "Remembered.".to_owned() }
         }
         other => format!("Error: there is no tool named {other}."),
     }
+}
+
+/// Adds the `memories` of a call's `args` that `memories` lacks (whitespace
+/// folded, cut to [`MEMORY_LIMIT`]); returns how many.
+fn add_memories(args: &Value, memories: &mut Vec<String>) -> usize {
+    let mut kept = 0;
+    for memory in args.get("memories").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str) {
+        let memory: String =
+            memory.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(MEMORY_LIMIT).collect();
+        if !memory.is_empty() && !memories.iter().any(|m| m.eq_ignore_ascii_case(&memory)) {
+            memories.push(memory);
+            kept += 1;
+        }
+    }
+    kept
+}
+
+/// Applies a memory review's `call`: drops the memories it forgets, by
+/// their number (from 1) in `shown`, the list it read, then adds its new
+/// ones. Memories added or edited since it read them stay.
+pub fn revise(call: &ToolCall, shown: &[String], memories: &mut Vec<String>) {
+    let Ok(args) = serde_json::from_str::<Value>(&call.arguments) else {
+        return;
+    };
+    // Some models write numbers as strings.
+    let number = |v: &Value| v.as_u64().or_else(|| v.as_str()?.trim().parse().ok());
+    let forget: Vec<&String> = args
+        .get("forget")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(number)
+        .filter_map(|n| shown.get(usize::try_from(n).ok()?.checked_sub(1)?))
+        .collect();
+    memories.retain(|m| !forget.contains(&m));
+    add_memories(&args, memories);
 }
 
 /// Who acted in a reply's `speak` calls but is not in the cast with a
@@ -590,7 +626,7 @@ pub fn shows_speech(call: &ToolCall) -> bool {
 /// One piece of what a story reply shows.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Part {
-    /// Everything one character does and says in the reply: one bubble.
+    /// What one character does and says next: one bubble.
     Said {
         /// Who.
         character: String,
@@ -604,8 +640,8 @@ pub enum Part {
 }
 
 /// What a story reply's calls (name, arguments) say, in order: a new scene
-/// and one [`Part::Said`] per character (their messages merged, whatever
-/// the model sent). Calls may still be streaming, as incomplete JSON. What
+/// and a [`Part::Said`] per message (a character's messages in a row share
+/// one). Calls may still be streaming, as incomplete JSON. What
 /// the calls changed (arrivals, departures, memories) is shown by
 /// [`reply_parts`] once they ran.
 #[must_use]
@@ -672,16 +708,16 @@ pub fn reply_parts(message: &StoredMessage) -> Vec<Part> {
     parts
 }
 
-/// Adds `text` to `character`'s bubble, or starts one; returns its index.
+/// Adds `text` to the last bubble when it is `character`'s, else starts
+/// one, so someone who speaks again after another gets a new bubble;
+/// returns its index.
 fn add_said(parts: &mut Vec<Part>, character: &str, text: &str) -> usize {
-    let earlier =
-        parts.iter().position(|part| matches!(part, Part::Said { character: c, .. } if names::same(c, character)));
-    if let Some(index) = earlier {
-        if let Part::Said { text: said, .. } = &mut parts[index] {
-            said.push_str("\n\n");
-            said.push_str(text);
-        }
-        return index;
+    if let Some(Part::Said { character: c, text: said }) = parts.last_mut()
+        && names::same(c, character)
+    {
+        said.push_str("\n\n");
+        said.push_str(text);
+        return parts.len() - 1;
     }
     parts.push(Part::Said { character: character.to_owned(), text: text.to_owned() });
     parts.len() - 1
@@ -918,8 +954,22 @@ mod tests {
             &["Rue is hurt.".to_owned()],
         );
         assert!(
-            prompt.starts_with(REVIEWER) && prompt.contains("# World: Panem") && prompt.ends_with("- Rue is hurt.")
+            prompt.starts_with(REVIEWER) && prompt.contains("# World: Panem") && prompt.ends_with("1. Rue is hurt.")
         );
+    }
+
+    #[test]
+    fn reviews_drop_outdated_memories_by_number() {
+        let shown = ["Rue is hurt.".to_owned(), "Gale owes Peeta.".to_owned(), "Prim is safe.".to_owned()];
+        // Added and edited while the review ran: both stay.
+        let mut memories =
+            vec!["Rue is hurt.".to_owned(), "Gale owes Peeta 5 coins.".to_owned(), "Prim is safe.".to_owned()];
+        memories.push("Katniss lost her bow.".to_owned());
+        let revision = json!({ "forget": [1, "2", 0, 9, "x"], "memories": ["Rue has healed.", " prim is SAFE. "] });
+        revise(&call(REMEMBER, &revision), &shown, &mut memories);
+        assert_eq!(memories, ["Gale owes Peeta 5 coins.", "Prim is safe.", "Katniss lost her bow.", "Rue has healed."]);
+        revise(&call(REMEMBER, &json!("not an object")), &shown, &mut memories);
+        assert_eq!(memories.len(), 4, "a broken call changes nothing");
     }
 
     #[test]
@@ -943,11 +993,12 @@ mod tests {
     }
 
     #[test]
-    fn each_character_gets_one_bubble() {
+    fn speaking_again_after_another_starts_a_new_bubble() {
         let args = json!({ "messages": [
             { "character": "Katniss", "action": "draws her *bow*", "text": "Stay back." },
             { "character": "Peeta", "text": "Easy." },
             { "character": "katniss", "text": "I mean it." },
+            { "character": "Katniss", "text": "Now." },
             { "character": "Haymitch", "action": "takes a long drink", "text": "" },
             { "character": "", "text": "nobody" },
             { "character": "Effie", "text": " " },
@@ -956,12 +1007,13 @@ mod tests {
         assert_eq!(
             shown,
             [
-                said("Katniss", "*draws her bow* Stay back.\n\nI mean it."),
+                said("Katniss", "*draws her bow* Stay back."),
                 said("Peeta", "Easy."),
+                said("katniss", "I mean it.\n\nNow."),
                 said("Haymitch", "*takes a long drink*")
             ]
         );
-        assert_eq!(display(&shown[1..]), "**Peeta**: Easy.\n\n**Haymitch**: *takes a long drink*");
+        assert_eq!(display(&shown[3..]), "**Haymitch**: *takes a long drink*");
         // Stories saved before `messages` still show.
         let old = json!({ "lines": [{ "character": "Peeta", "text": "Easy." }] }).to_string();
         assert_eq!(parts([(SPEAK, old.as_str())].into_iter()), [said("Peeta", "Easy.")]);
@@ -1212,10 +1264,7 @@ mod tests {
             noted.contains("Moved into the scene: Haymitch.")
                 && noted.contains("Not in the cast with a description: Rue.")
         );
-        assert!(
-            noted.contains("Never speak or act for the user's character.")
-                && noted.contains("Rue had more than one message")
-        );
+        assert!(noted.contains("Never speak or act for the user's character.") && !noted.contains("Rue, Rue"));
         assert!(cast.iter().all(|m| m.present) && !cast.iter().any(|m| m.name == "Rue" || m.name == "Gale"));
         assert_eq!(
             undescribed([&call(SPEAK, &lines(&["Rue", "Katniss", "rue", "Gale"]))].into_iter(), &cast, Some(&gale)),

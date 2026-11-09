@@ -7,8 +7,8 @@
 //! with the next request. A reply that only called tools and showed
 //! nothing (say, it just created a character) is continued at once, up to
 //! [`AUTO_ROUNDS`] times in a row. Every [`REVIEW_EVERY`] prompts, a separate
-//! request reads the latest turns and adds what the story must not forget to
-//! its memories.
+//! request reads the latest turns and revises the story's memories: it drops
+//! outdated ones, merges and adds.
 //!
 //! The system prompt holds what rarely changes (the rules, the world, who the
 //! user plays and the whole cast, with their example dialogue and the lore
@@ -84,48 +84,37 @@ const MAX_CONTEXT: u64 = 250_000;
 const PLAIN_CHAT: &str =
     "You are OpenRP, a helpful AI assistant in a desktop app. Answer in Markdown and keep answers focused.";
 /// How the model runs a story; the world and cast follow it.
-const ROLEPLAY: &str = "You play every character in an interactive roleplay story except the user's own. There is no narrator: \
-    the story is told only through the characters, by what they say and do. Stay true to the world's premise, rules and tone, and \
-    keep each character consistent with their description.\n\n\
-    The latest message ends with the story state: the scene, who is in it, who is elsewhere, lore the latest turns call for, what \
-    the story must not forget and the user's author's note. The app writes it, not the user, and it is always current: trust it \
-    over older turns.\n\n\
-    How to reply:\n\
-    - Every reply is one speak call. Write nothing outside tool calls: there is no narration, ever. Never describe events, \
-    surroundings or the passing of time in your own voice; the scene field holds the place and its ambiance, and everything \
-    else is shown through what the characters say and do.\n\
-    - Each responding character gets exactly one message in the speak call, holding everything they say and do this turn. \
-    Never give a character two messages. In it, action is what they do as they respond (movement, expression, what they \
-    notice) and text exactly what they say; a short action between their words goes in *asterisks*. A character who only \
-    acts gets an action and empty text.\n\
-    - Only characters in the scene respond. Decide which of them do: whoever the user addresses, plus anyone else present who \
-    would naturally react.\n\
-    - Every character is one individual person (or creature). Never a group, crowd, organisation, institution, place, object \
-    or system: no \"Royal Guards\", \"Government\", \"Villagers\", \"System\" or \"Narrator\", and nobody who stands in for a \
-    narrator by announcing or describing events.\n\
-    - When the user refers to someone, work out who they mean before anyone new appears. A role, title, relation or description \
-    (\"the captain\", \"your sister\", \"the old man by the fire\") means the cast member it fits, if one does: use their cast \
-    name. A group or institution (\"the guards\", \"the government\") speaks and acts through one person who stands for it: the \
-    cast member who fits (its captain, its envoy), or else one new individual (\"Sergeant Mara Voss\" for the Royal Guard); the \
-    rest of the group shows through what that person says and does.\n\
-    - Do not invent characters. Bring in someone new only when the user refers to a person who fits no one in the cast (\"I \
-    walk up to the bartender\"), or when no one is in the scene to respond. Then list them in the speak call's introduce, each \
-    with a description, in the same call as their first lines. Never add bystanders, newcomers or interruptions on your own.\n\
-    - Give every newcomer a personal name that fits the world (\"Bram Holloway\", never \"Bartender\", \"Guard\", \"Guard 2\", \
-    \"Old Man\" or \"Stranger\"), even before the user's character learns it; their description says what they are.\n\
-    - A cast member elsewhere acts only when the user brings them in; they are then moved into the scene. Use create_character \
-    only for someone the user refers to who does not act yet.\n\
-    - Call every character by their name in the cast. When the story changes someone for good (they reveal their real name, \
-    take a new one, or their role or appearance changes), call update_character.\n\
-    - Keep track of the scene: where the characters are and what it is like there. When it is not set yet, or it changes (the \
-    user goes somewhere, time passes, the mood or weather turns), set speak's scene to the place and its ambiance; otherwise \
-    leave it empty. Cast members who stay behind or walk off go in speak's leave.\n\
-    - When something happens that the story must not forget (a promise, a secret revealed, a decision, an injury, a changed \
-    relationship), call remember in the same reply with short facts. Never repeat what the memories already hold.\n\
-    - A user message may end with an out-of-character instruction, marked OOC: it is the user talking to you, not their \
-    character speaking or acting. Follow it in this reply.\n\
-    - Follow the author's note, if there is one, in every reply.\n\
-    - Never speak, act or decide for the user's character. End where the user can respond.";
+const ROLEPLAY: &str = "You play every character in an interactive roleplay story except the user's. There is no narrator: the \
+    story is told only through what the characters say and do, in speak calls. The app shows nothing else.\n\n\
+    The latest message ends with the story state, written by the app, not the user: the scene and who is in it (always \
+    current), lore, memories and the author's note.\n\n\
+    Format:\n\
+    - Every reply is one speak call. Write no text outside tool calls.\n\
+    - In each message, action is what the character does (movement, expression, what they notice), text exactly what they \
+    say.\n\
+    - Only characters in the scene respond: whoever the user addresses, plus anyone present who would react.\n\
+    - Never speak, act or decide for the user's character. End where the user can respond.\n\n\
+    Writing:\n\
+    - Characters act on their own goals, knowledge and mood: they take initiative, make choices, disagree and keep secrets. \
+    They know only what they have seen or been told.\n\
+    - Move the story forward in every reply: a decision, a reveal, a complication or an event. Events (a storm, a noise, a \
+    door slamming) show through what present characters notice and do.\n\
+    - Do not repeat or paraphrase the user's message. Do not reuse openings, gestures or turns of phrase from earlier replies.\n\
+    - Keep quick exchanges short; give turning points more room.\n\
+    - Keep each character true to their description and example dialogue, and the story true to the world.\n\n\
+    Cast:\n\
+    - Every character is one named individual: never a group, institution, object or narrator. A group acts through one \
+    member: a cast member who fits, or one newcomer.\n\
+    - A role or description the user uses (\"the captain\", \"your sister\") means the cast member it fits: use their cast name.\n\
+    - Add a newcomer only when the user refers to someone no cast member fits, or no one is in the scene. Put them in speak's \
+    introduce with a personal name that fits the world (never \"Guard\" or \"Stranger\") and a description.\n\
+    - Use create_character only for someone the user refers to who does not act this turn.\n\
+    - When a cast member changes for good (real name revealed, new role or appearance), call update_character.\n\n\
+    State:\n\
+    - Set speak's scene when it is unset or changes (a new place, time passes, the mood or weather turns); otherwise leave it \
+    empty. Cast members who stay behind or walk off go in leave.\n\
+    - When something happens that must not be forgotten (a promise, a secret revealed, a decision, an injury, a changed \
+    relationship), call remember in the same reply.";
 /// Opens the cast section of a story's prompt.
 const CAST: &str = "The characters you play. The story state says which of them are in the scene now.";
 /// Opens a character's example dialogue.
@@ -146,20 +135,19 @@ const LORE_BUDGET: usize = 8_000;
 /// Opens the story state sent with the latest message.
 const STATE: &str = "[Story state, kept by the app: not part of the user's message]";
 /// Opens the memories section of the story state.
-const MEMORIES: &str = "Facts this story must not forget, kept with remember. They hold even when the conversation above no longer shows them.";
+const MEMORIES: &str = "Facts from earlier in the story. When a later turn contradicts one, the turn wins.";
 /// Opens the author's note section of the story state.
 const NOTE: &str = "The user's guidance for the whole story. Follow it in every reply.";
 /// Introduces an out-of-character instruction sent with a user message.
 const OOC: &str = "(OOC: the user's instruction for this reply, not something their character says or does.)";
 /// Opens the list of cast members away from the scene.
-const ELSEWHERE: &str = "Part of the story, but not in the current scene. They may be mentioned, but do not have them act here unless the \
-    user brings them in.";
+const ELSEWHERE: &str = "In the story but not in this scene: they act only when the user brings them in.";
 /// Stands in for the description of a character who has none.
 const UNDESCRIBED: &str = "(Not described yet: keep them consistent with what they have said and done so far.)";
 /// Added when nobody is in the scene: the first thing to do is cast someone.
-const NOBODY_HERE: &str = "No one is in the scene yet. Introduce who the user meets in your speak call's introduce, each with a \
-    personal name and a description, and have them act in its lines: the people the user's message names or refers to (one \
-    person for a group it mentions), or, if it names no one, the one character the moment most needs.";
+const NOBODY_HERE: &str = "No one is in the scene yet. In your speak call, introduce whoever the user meets, each with a \
+    personal name and a description, and have them act: the people the user's message refers to (one person for a group), or, \
+    if it refers to no one, the one character the moment needs most.";
 
 /// `(Formerly called …)` for someone with former `aliases`; empty without.
 fn formerly(aliases: &[String]) -> String {
@@ -457,6 +445,8 @@ pub(super) struct Review {
     pub deadline: Instant,
     /// The prompts reviewed before it, restored if it fails.
     pub before: usize,
+    /// The memories it was shown, numbered from 1, which it forgets by number.
+    pub memories: Vec<String>,
 }
 
 /// Converts saved messages into API input, starting at the latest summary
@@ -661,14 +651,20 @@ impl Chat {
         if let Some(conversation) = self.find(id) {
             let before = conversation.reviewed;
             conversation.reviewed = before + prompts;
-            conversation.reviewing =
-                Some(Review { request, model, cancel, deadline: Instant::now() + REVIEW_TIMEOUT, before });
+            conversation.reviewing = Some(Review {
+                request,
+                model,
+                cancel,
+                deadline: Instant::now() + REVIEW_TIMEOUT,
+                before,
+                memories: conversation.memories.clone(),
+            });
             actions.push(Action::ReviewMemories(job));
         }
     }
 
-    /// The review of `request` answered: what it found joins the story's
-    /// memories (once each), and the request is billed with its next reply.
+    /// The review of `request` answered: it revises the story's memories
+    /// (see [`tools::revise`]), and the request is billed with its next reply.
     /// A failed one leaves its turns for the next review. An answer for a
     /// story deleted, or given up on since, is dropped.
     pub fn memories_reviewed(
@@ -694,7 +690,7 @@ impl Chat {
         let conversation = &mut self.conversations[index];
         conversation.carried_cost += cost;
         if let Some(call) = call.filter(|c| c.name == tools::REMEMBER) {
-            tools::run(&call, &mut Vec::new(), &mut String::new(), &mut conversation.memories, None);
+            tools::revise(&call, &review.memories, &mut conversation.memories);
         }
         if conversation.load == Load::Loaded {
             actions.push(Action::SaveSession(conversation.to_session()));

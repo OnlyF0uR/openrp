@@ -23,11 +23,11 @@ pub struct Login {
 }
 
 impl Login {
-    /// The screen holding `base_url`, optionally explaining why the user
-    /// landed here.
+    /// The screen holding `base_url` and offering the providers used before
+    /// (`saved`), optionally explaining why the user landed here.
     #[must_use]
-    pub fn new(error: Option<String>, base_url: &str) -> Self {
-        let mut form = ProviderForm::new(base_url, false);
+    pub fn new(error: Option<String>, base_url: &str, saved: Vec<String>) -> Self {
+        let mut form = ProviderForm::new(base_url, None, saved);
         form.error = error;
         Self { form, problem: None, scroll: 0.0 }
     }
@@ -91,7 +91,7 @@ impl Login {
         p.text_aligned(&subtitle, x, y, Align::Center, inner, t.text_muted);
         y += subtitle.height() + 24.0;
 
-        self.form.draw(p, ui, x, y, inner);
+        self.form.draw(p, ui, x, y, inner, actions);
         y += form_h + 24.0;
         if button(p, ui, Rect::new(x, y, inner, 36.0), "Connect", ButtonStyle::Primary, true) {
             self.connect(actions);

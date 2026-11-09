@@ -2,9 +2,8 @@
 //!
 //! Colours live in a [`Palette`] so the scheme can change at runtime; the
 //! painter carries the active one (`p.theme`). Sizes and text styles are the
-//! same in every scheme. The chrome is Zed-inspired: flat surfaces, hairline
-//! borders, small radii and one accent. The story itself is warmer: prose
-//! in a serif, and every character in a colour of their own
+//! same in every scheme. The story reads like a book: prose in a serif, and
+//! every character in a colour of their own
 //! ([`character_color`]), so a busy scene reads at a glance.
 
 use crate::paint::{Color, hex, hexa, mix};

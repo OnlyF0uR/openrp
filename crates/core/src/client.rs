@@ -30,8 +30,11 @@ pub struct Client {
     base: String,
     /// The provider's API key.
     token: Option<String>,
-    /// Whether the provider is Anthropic, spoken to with Messages.
+    /// Whether the provider is spoken to with Messages: Anthropic, or
+    /// Cloudflare at its `/messages` address.
     pub(crate) anthropic: bool,
+    /// Whether the provider is Cloudflare's AI REST API (AI Gateway).
+    cloudflare: bool,
 }
 
 impl std::fmt::Debug for Client {
@@ -98,7 +101,9 @@ impl Client {
     /// Creates a client for an OpenAI-compatible provider whose API root is
     /// `base_url` (e.g. `https://openrouter.ai/api/v1`), authenticated with
     /// `api_key` when there is one (local servers often need none). An
-    /// address on `api.anthropic.com` means Anthropic's own API.
+    /// address on `api.anthropic.com` means Anthropic's own API. One on
+    /// `api.cloudflare.com` is AI Gateway: `…/ai/v1/messages` speaks
+    /// Messages, any other of its endpoints Chat Completions at `…/ai/v1`.
     #[must_use]
     pub fn new(base_url: &str, api_key: Option<String>) -> Self {
         let agent = ureq::Agent::config_builder()
@@ -113,9 +118,19 @@ impl Client {
             .build()
             .into();
         let host = base_url.split_once("://").and_then(|(_, rest)| rest.split(['/', ':']).next());
-        let anthropic = host.is_some_and(|host| host.eq_ignore_ascii_case("api.anthropic.com"));
-        let base = if anthropic { ANTHROPIC } else { base_url.trim_end_matches('/') };
-        Self { agent, base: base.to_owned(), token: api_key, anthropic }
+        let on = |name: &str| host.is_some_and(|host| host.eq_ignore_ascii_case(name));
+        let cloudflare = on("api.cloudflare.com");
+        let base = base_url.trim_end_matches('/');
+        // Whichever of Cloudflare's endpoints was pasted (`/ai/run`, `/ai/v1/chat/completions`,
+        // `/ai/v1/responses`, `/ai/v1/messages`), its root is `…/ai/v1`; only `/messages` means Messages.
+        let gateway = base.find("/ai/").filter(|_| cloudflare).map(|at| format!("{}/ai/v1", &base[..at]));
+        let anthropic = on("api.anthropic.com") || (gateway.is_some() && base.ends_with("/messages"));
+        let base = match gateway {
+            _ if on("api.anthropic.com") => ANTHROPIC.to_owned(),
+            Some(root) => root,
+            None => base.to_owned(),
+        };
+        Self { agent, base, token: api_key, anthropic, cloudflare }
     }
 
     /// Lists the available chat models.
@@ -127,8 +142,14 @@ impl Client {
         struct Body {
             data: Vec<Model>,
         }
+        // ponytail: Cloudflare lists no models (`GET /ai/v1/models` is a 405),
+        // so their names are typed; read its list once cloudflare/ai#549 adds one.
+        if self.cloudflare {
+            return Ok(Vec::new());
+        }
         if self.anthropic {
-            let response = self.authorize(self.agent.get(format!("{}/models?limit=1000", self.base))).call()?;
+            let request = self.agent.get(format!("{}/models?limit=1000", self.base));
+            let response = self.authorize(request.header("anthropic-version", ANTHROPIC_VERSION)).call()?;
             return crate::messages::models(response);
         }
         let response = self.authorize(self.agent.get(format!("{}/models", self.base))).call()?;
@@ -136,22 +157,33 @@ impl Client {
         Ok(body.data)
     }
 
+    /// Whether replies from `model` use Messages: every model on Anthropic
+    /// (or Cloudflare's `/messages`), and Claude (`anthropic/…`) anywhere on
+    /// Cloudflare, whose Chat Completions answers Claude in Messages events.
+    pub(crate) fn speaks_messages(&self, model: &str) -> bool {
+        self.anthropic || (self.cloudflare && model.starts_with("anthropic/"))
+    }
+
     /// POSTs `body` as JSON, authenticated, and returns the raw response
     /// after checking the status. Used by streaming calls that consume the
     /// body incrementally.
     pub(crate) fn post(&self, path: &str, body: &Value) -> Result<Response<ureq::Body>> {
-        let request = self.agent.post(format!("{}{path}", self.base)).content_type("application/json");
+        let mut request = self.agent.post(format!("{}{path}", self.base)).content_type("application/json");
+        if path == "/messages" {
+            request = request.header("anthropic-version", ANTHROPIC_VERSION);
+        }
         check_status(self.authorize(request).send(&serde_json::to_vec(body)?[..])?)
     }
 
-    /// `request` with the provider's credentials: Anthropic's own headers,
-    /// or a bearer token.
+    /// `request` with the provider's credentials: Anthropic's own header,
+    /// or a bearer token (Cloudflare's, with its default gateway named,
+    /// which its own Workers AI models need).
     fn authorize<B>(&self, mut request: ureq::RequestBuilder<B>) -> ureq::RequestBuilder<B> {
-        if self.anthropic {
-            request = request.header("anthropic-version", ANTHROPIC_VERSION);
+        if self.cloudflare {
+            request = request.header("cf-aig-gateway-id", "default");
         }
         match &self.token {
-            Some(token) if self.anthropic => request.header("x-api-key", token),
+            Some(token) if self.anthropic && !self.cloudflare => request.header("x-api-key", token),
             Some(token) => request.header("Authorization", format!("Bearer {token}")),
             None => request,
         }
@@ -246,6 +278,26 @@ mod tests {
             assert!(!client(url).anthropic, "{url}");
         }
         assert_eq!(client("http://localhost:11434/v1/").base, "http://localhost:11434/v1");
+        assert!(!client("https://example.com/v1/messages").anthropic, "only Cloudflare's /messages");
+    }
+
+    #[test]
+    fn cloudflare_speaks_what_its_address_ends_in() {
+        let account = "https://api.cloudflare.com/client/v4/accounts/abc";
+        let root = format!("{account}/ai/v1");
+        let messages = super::Client::new(&format!("{root}/messages/"), None);
+        assert!(messages.cloudflare && messages.anthropic && messages.base == root);
+        for end in ["/ai/v1", "/ai/v1/chat/completions", "/ai/v1/responses", "/ai/run"] {
+            let completions = super::Client::new(&format!("{account}{end}"), None);
+            assert!(completions.cloudflare && !completions.anthropic && completions.base == root, "{end}");
+            // Its Chat Completions answers Claude in Messages events: Claude speaks Messages.
+            assert!(completions.speaks_messages("anthropic/claude-haiku-5.5"), "{end}");
+            assert!(!completions.speaks_messages("@cf/google/gemma-4"), "{end}");
+        }
+        assert!(
+            !super::Client::new("https://openrouter.ai/api/v1", None).speaks_messages("anthropic/claude-haiku-5.5")
+        );
+        assert!(super::Client::new(&root, None).models().unwrap().is_empty(), "no request: Cloudflare lists none");
     }
 
     #[test]

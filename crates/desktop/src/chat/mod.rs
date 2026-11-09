@@ -49,7 +49,7 @@ pub use dialog::GenerateJob;
 use notice::Notice;
 use stream::{ActiveStream, Retry, Review};
 pub use stream::{ReviewJob, SendJob};
-pub use tools::{generator_tool, remember_tool, tool_definitions};
+pub use tools::{generator_tool, review_tool, tool_definitions};
 
 /// Model used until the user picks one.
 pub const DEFAULT_MODEL: &str = "claude-sonnet-5.5";
@@ -2153,12 +2153,21 @@ mod tests {
         let mut actions = Vec::new();
         chat.review_memories(id, true, &mut actions);
         let forced = review_of(actions).expect("asked for");
-        assert!(forced.transcript.starts_with("Gale: turn 9") && forced.instructions.contains("- Gale trusts Peeta."));
+        assert!(forced.transcript.starts_with("Gale: turn 9") && forced.instructions.contains("1. Gale trusts Peeta."));
 
         // A failed review changes nothing and lets the next one run.
         let error = Error::Response { code: None, message: "boom".into() };
         chat.memories_reviewed(id, forced.request, Err(error), &mut Vec::new());
         assert!(chat.current().reviewing.is_none() && chat.current().memories.len() == 1);
+
+        // A review drops what it forgets by number; what was added meanwhile stays.
+        let mut actions = Vec::new();
+        chat.review_memories(id, true, &mut actions);
+        let again = review_of(actions).expect("turn 9 is read again");
+        chat.current().memories.push("Peeta is hurt.".into());
+        let revision = remember(r#"{"forget":[1],"memories":["Gale distrusts Peeta."]}"#);
+        chat.memories_reviewed(id, again.request, Ok((Some(revision), Usage::default())), &mut Vec::new());
+        assert_eq!(chat.current().memories, ["Peeta is hurt.", "Gale distrusts Peeta."]);
     }
 
     #[test]

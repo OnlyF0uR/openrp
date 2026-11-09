@@ -61,6 +61,8 @@ pub struct Provider {
     pub base_url: String,
     /// A key is saved for the provider.
     pub has_key: bool,
+    /// Addresses of the providers used before, latest first.
+    pub saved: Vec<String>,
 }
 
 /// Open tab and scroll state of the settings page.
@@ -69,28 +71,21 @@ pub struct SettingsView {
     scroll: f32,
     /// Content height measured last frame, for clamping the scroll.
     content_h: f32,
-    provider: Provider,
-    /// The provider's address and key, as being edited.
+    /// The providers saved, and a new one being entered.
     form: ProviderForm,
 }
 
 impl Default for SettingsView {
     fn default() -> Self {
-        Self {
-            tab: Tab::default(),
-            scroll: 0.0,
-            content_h: 0.0,
-            provider: Provider::default(),
-            form: ProviderForm::new("", false),
-        }
+        Self { tab: Tab::default(), scroll: 0.0, content_h: 0.0, form: ProviderForm::new("", None, Vec::new()) }
     }
 }
 
 impl SettingsView {
     /// Shows `provider`, starting the provider form afresh from it.
     pub fn set_provider(&mut self, provider: Provider) {
-        self.form = ProviderForm::new(&provider.base_url, provider.has_key);
-        self.provider = provider;
+        let active = Some((provider.base_url, provider.has_key)).filter(|(url, _)| !url.is_empty());
+        self.form = ProviderForm::new("", active, provider.saved);
     }
 
     /// Keyboard input for the provider form, on its tab.
@@ -236,23 +231,12 @@ impl SettingsView {
                 y = section(p, x, y, "Provider", "Where replies come from. Your stories stay on this device.");
                 let inner = width - 32.0;
                 let form_h = self.form.height(p, inner);
-                let card = Rect::new(x, y, width, 68.0 + form_h + 20.0 + 30.0 + 16.0);
+                let card = Rect::new(x, y, width, 16.0 + form_h + 20.0 + 30.0 + 16.0);
                 p.bordered(card, t.surface, theme::RADIUS, 1.0, t.border);
-                setting_row(
-                    p,
-                    card,
-                    "API",
-                    "Anthropic's, or any provider or local server that speaks Chat Completions.",
-                );
-                self.form.draw(p, ui, card.x + 16.0, card.y + 68.0, inner);
-                let buttons_y = card.y + 68.0 + form_h + 20.0;
-                let save = Rect::new(card.right() - 16.0 - 120.0, buttons_y, 120.0, 30.0);
-                if button(p, ui, save, "Save", ButtonStyle::Primary, true) {
+                self.form.draw(p, ui, card.x + 16.0, card.y + 16.0, inner, actions);
+                let connect = Rect::new(card.right() - 16.0 - 120.0, card.y + 16.0 + form_h + 20.0, 120.0, 30.0);
+                if button(p, ui, connect, "Connect", ButtonStyle::Primary, true) {
                     self.connect(actions);
-                }
-                let forget = Rect::new(save.x - 8.0 - 104.0, buttons_y, 104.0, 30.0);
-                if self.provider.has_key && button(p, ui, forget, "Forget key", ButtonStyle::Danger, true) {
-                    actions.push(Action::ForgetKey);
                 }
                 y += card.h + SECTION_GAP;
 

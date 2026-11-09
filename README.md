@@ -69,12 +69,12 @@ cargo clippy --workspace --all-targets
   review. Deleting a world deletes its stories: its Delete asks again and says how many.
 - **No narrator**: the story is told only through its characters. Every reply must call a tool
   (the request sets `tool_choice: required`), and text written outside tool calls is dropped:
-  there is no narration. `speak` holds the whole turn in one call, as one message per
-  responding character: what they do (action) and what they say (text, with short actions in
-  *asterisks*), so several characters can answer and react to each other. Each character gets
-  one bubble per reply, with their portrait and name, their actions muted and their words in
-  full colour, in a serif made for reading (Literata); if a model gives someone two messages,
-  they are merged and the model is told. Every character has a colour of their own: their name,
+  there is no narration. `speak` holds the whole turn in one call, as messages in order: what
+  a character does (action) and says (text, with short actions in *asterisks*), so several
+  characters can answer and react to each other. Each message is a bubble with the
+  character's portrait and name, their actions muted and their words in full colour, in a
+  serif made for reading (Literata); someone who speaks again after another gets a new bubble,
+  so the exchange keeps its order. Every character has a colour of their own: their name,
   portrait ring and bubble wear it, so a busy scene reads at a glance. It is picked from their
   name until you choose one: **Colour** beside the name in a character's or persona's form (and
   in a cast member's or your character's dialog) opens a picker with presets, a shade square,
@@ -143,9 +143,9 @@ cargo clippy --workspace --all-targets
   sent with every request, so they survive summarising; **Memories** in the cast panel lists
   them in a dialog where each can be edited or removed (×), and new ones added (Enter or
   **+ Add memory**). Regenerating or deleting the reply that remembered something forgets it
-  again. Every 8 prompts a separate request reads the turns since the last time and adds what
-  the story must not forget (Memory shows "…" while it works; it is billed with the next
-  reply). One that fails or takes over three minutes leaves its turns for the next review.
+  again. Every 8 prompts a separate request reads the turns since the last time and revises the
+  memories: it drops those the turns made outdated, merges related ones and adds what the story
+  must not forget (Memory shows "…" while it works; it is billed with the next reply). One that fails or takes over three minutes leaves its turns for the next review.
   `/memorize` runs it at once.
 - **Author's note and OOC**: **Author's note** in the cast panel holds your guidance for the whole story
   (tone, pacing, limits), sent last in every request. For one reply only, end a message with a
@@ -171,14 +171,21 @@ cargo clippy --workspace --all-targets
   reasoning display),
   Models (a **background model** for memory reviews, summaries and generated characters: a
   cheaper one saves money, and summaries stay on the story's model when it holds less
-  context), Usage totals, and Provider (edit the base URL and key, or forget the key; the data
-  folder).
+  context), Usage totals, and Provider (the saved providers, one in use; add, switch to or remove one, or forget the
+  key in use; the data folder).
 - **Anthropic or any OpenAI-compatible provider**: until one is set, the app asks for its base
   URL and API key (left empty for a local server that needs none), with presets for Anthropic,
-  OpenRouter, Inworld, OpenAI and Ollama. An address on `api.anthropic.com` is spoken to with
+  OpenRouter, Cloudflare (its `ACCOUNT_ID` selected, to paste over), Inworld, OpenAI and Ollama.
+  Every provider used before stays saved with its key and is listed above the form: **Use**
+  switches to it, × forgets it. An address on `api.anthropic.com` is spoken to with
   Anthropic's Messages API, which caches the system prompt and the story so far and shows
   Claude's summarized thinking when an effort is picked; every other one with Chat Completions.
-  The model must support tool calls.
+  Cloudflare's AI Gateway (`https://api.cloudflare.com/client/v4/accounts/<account>/ai/v1`,
+  with a Cloudflare API token as the key) takes any of its endpoints. Claude (`anthropic/…`
+  models) always speaks Messages at `/ai/v1/messages`, with prompt caching; other models speak
+  Chat Completions (`@cf/…` ones included), unless the address ends in `/messages`; requests go through the account's `default` gateway, and since
+  Cloudflare lists no models, their names are typed in the model menu. The model must support
+  tool calls.
 - **The window remembers** its size and whether it was maximized.
 - **Zoom** (Ctrl/Cmd + and -, Ctrl/Cmd+0 resets): everything grows or shrinks, from 50% to 200%,
   in steps of 10%; kept for the next start.

@@ -30,6 +30,10 @@ pub struct Config {
     pub base_url: Option<String>,
     /// API key for the provider; absent when it needs none.
     pub api_key: Option<String>,
+    /// Providers used before, to switch back to, latest first: address and
+    /// key. Stored as one string, a line each, the key after a space
+    /// (neither holds whitespace).
+    pub providers: Vec<(String, Option<String>)>,
     /// Identifier of the model used for new messages.
     pub model: Option<String>,
     /// Reasoning effort for new messages (`none`, `low`, `medium`, `high`);
@@ -58,6 +62,7 @@ impl std::fmt::Debug for Config {
         f.debug_struct("Config")
             .field("base_url", &self.base_url)
             .field("api_key", &self.api_key.as_ref().map(|_| "<redacted>"))
+            .field("providers", &self.providers.iter().map(|(url, _)| url).collect::<Vec<_>>())
             .field("model", &self.model)
             .field("reasoning", &self.reasoning)
             .field("theme", &self.theme)
@@ -73,11 +78,12 @@ impl std::fmt::Debug for Config {
 /// The keys this build reads; see [`Config`]. `token` and `provider` belonged
 /// to the SereChat sign-in, which is gone: read so they are dropped, never
 /// written.
-const KEYS: [&str; 11] = [
+const KEYS: [&str; 12] = [
     "token",
     "provider",
     "base_url",
     "api_key",
+    "providers",
     "model",
     "reasoning",
     "theme",
@@ -146,6 +152,21 @@ impl Config {
         write_private(path, self.serialize().as_bytes())
     }
 
+    /// Uses the provider at `base_url` from now on, with `api_key`, or else
+    /// the key saved for that address; the provider it replaces is kept in
+    /// [`Config::providers`] to switch back to.
+    pub fn use_provider(&mut self, base_url: String, api_key: Option<String>) {
+        if let Some(old) = self.base_url.take() {
+            self.providers.retain(|(url, _)| *url != old);
+            self.providers.insert(0, (old, self.api_key.take()));
+        }
+        // A saved key only ever goes to the address it was saved for.
+        let at = self.providers.iter().position(|(url, _)| *url == base_url);
+        let saved = at.and_then(|at| self.providers.remove(at).1);
+        self.api_key = api_key.or(saved);
+        self.base_url = Some(base_url);
+    }
+
     /// Parses the flat TOML subset described in the module docs.
     ///
     /// # Errors
@@ -173,6 +194,13 @@ impl Config {
             match key {
                 "base_url" => config.base_url = Some(value),
                 "api_key" => config.api_key = Some(value),
+                "providers" => {
+                    let saved = value.lines().filter_map(|line| {
+                        let (url, key) = line.split_once(' ').unwrap_or((line, ""));
+                        (!url.is_empty()).then(|| (url.to_owned(), Some(key.to_owned()).filter(|k| !k.is_empty())))
+                    });
+                    config.providers = saved.collect();
+                }
                 "model" => config.model = Some(value),
                 "reasoning" => config.reasoning = Some(value),
                 "theme" => config.theme = Some(value),
@@ -191,9 +219,15 @@ impl Config {
     #[must_use]
     pub fn serialize(&self) -> String {
         let mut out = String::from("# OpenRP configuration.\n");
+        let saved = self.providers.iter().map(|(url, key)| match key {
+            Some(key) => format!("{url} {key}"),
+            None => url.clone(),
+        });
+        let providers = Some(saved.collect::<Vec<_>>().join("\n")).filter(|p| !p.is_empty());
         let fields = [
             ("base_url", &self.base_url),
             ("api_key", &self.api_key),
+            ("providers", &providers),
             ("model", &self.model),
             ("reasoning", &self.reasoning),
             ("theme", &self.theme),
@@ -360,6 +394,10 @@ mod tests {
         let config = Config {
             base_url: Some("https://openrouter.ai/api/v1".into()),
             api_key: Some("sk-or".into()),
+            providers: vec![
+                ("https://api.anthropic.com/v1".into(), Some("sk-ant".into())),
+                ("http://localhost:11434/v1".into(), None),
+            ],
             model: Some("claude-sonnet-5.5".into()),
             reasoning: Some("high".into()),
             theme: Some("li\"ght\\\n\u{1}é".into()),
@@ -370,8 +408,11 @@ mod tests {
             extra: Vec::new(),
         };
         assert_eq!(Config::parse(&config.serialize()).unwrap(), config);
-        let secret = Config { api_key: Some("k3y".into()), ..Config::default() };
-        assert!(!format!("{secret:?}").contains("k3y"), "credentials never show in Debug output");
+        let saved = vec![("https://x.example/v1".into(), Some("s4ved".into()))];
+        let secret = Config { api_key: Some("k3y".into()), providers: saved, ..Config::default() };
+        let debug = format!("{secret:?}");
+        assert!(!debug.contains("k3y") && !debug.contains("s4ved"), "credentials never show in Debug output");
+        assert!(debug.contains("x.example"));
     }
 
     #[test]
@@ -394,6 +435,26 @@ mod tests {
             "keys in a table are not ours"
         );
         assert_eq!(config.extra, ["font_size = 14", "list = [1, 2]", "[window]", "theme = \"not ours\""]);
+        assert_eq!(Config::parse(&config.serialize()).unwrap(), config);
+    }
+
+    #[test]
+    fn switching_providers_keeps_their_keys() {
+        let (a, b, c) = ("https://a.example/v1", "https://b.example/v1", "http://localhost:1/v1");
+        let mut config = Config::default();
+        config.use_provider(a.into(), Some("ka".into()));
+        config.use_provider(b.into(), Some("kb".into()));
+        config.use_provider(c.into(), None);
+        assert_eq!(config.providers, [(b.into(), Some("kb".into())), (a.into(), Some("ka".into()))]);
+        // Back to a: its saved key comes with it, and c is kept keyless.
+        config.use_provider(a.into(), None);
+        assert_eq!((config.base_url.as_deref(), config.api_key.as_deref()), (Some(a), Some("ka")));
+        assert_eq!(config.providers, [(c.into(), None), (b.into(), Some("kb".into()))]);
+        // The same address again keeps its key, or takes a new one typed.
+        config.use_provider(a.into(), None);
+        assert_eq!(config.api_key.as_deref(), Some("ka"));
+        config.use_provider(a.into(), Some("new".into()));
+        assert_eq!((config.api_key.as_deref(), config.providers.len()), (Some("new"), 2));
         assert_eq!(Config::parse(&config.serialize()).unwrap(), config);
     }
 
