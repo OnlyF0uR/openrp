@@ -559,7 +559,7 @@ mod tests {
             personas: &[],
             models: &[],
             model: "",
-            scheme: Scheme::Dark,
+            scheme: Scheme::Black,
         };
         let mut spotlight = Spotlight::default();
         spotlight.input.insert("pars");
@@ -590,7 +590,7 @@ mod tests {
             personas: &[],
             models: &[],
             model: "",
-            scheme: Scheme::Dark,
+            scheme: Scheme::Black,
         };
         let picks = |query: &str| {
             let mut spotlight = Spotlight::default();
@@ -642,7 +642,7 @@ mod tests {
             personas: &gale,
             models: &[],
             model: "",
-            scheme: Scheme::Dark,
+            scheme: Scheme::Black,
         };
         let rows = |query: &str| {
             let mut spotlight = Spotlight::default();

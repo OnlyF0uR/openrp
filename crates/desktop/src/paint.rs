@@ -88,6 +88,7 @@ impl Rect {
 const KIND_SHAPE: f32 = 0.0;
 const KIND_GLYPH: f32 = 1.0;
 const KIND_IMAGE: f32 = 2.0;
+const KIND_GRADIENT: f32 = 3.0;
 
 /// Records draw calls for one frame.
 pub struct Painter<'a> {
@@ -148,10 +149,11 @@ impl<'a> Painter<'a> {
         lookup
     }
 
-    /// Draws the image at `path` as a soft wash over `rect`: a thumbnail a
-    /// few pixels across, stretched so the GPU's filtering blurs it, faded
-    /// to `alpha`. One quad, so a backdrop costs nothing per frame.
-    pub fn backdrop(&mut self, path: &str, rect: Rect, alpha: f32) -> Lookup {
+    /// Draws the image at `path` as a soft wash over `rect` (its corners
+    /// rounded by `radius`): a thumbnail a few pixels across, stretched so
+    /// the GPU's filtering blurs it, faded to `alpha`. One quad, so a
+    /// backdrop costs nothing per frame.
+    pub fn backdrop(&mut self, path: &str, rect: Rect, radius: f32, alpha: f32) -> Lookup {
         const SIDE: f32 = 24.0;
         let (w, h) = if rect.w >= rect.h {
             (SIDE, (SIDE * rect.h / rect.w).max(2.0))
@@ -164,7 +166,7 @@ impl<'a> Painter<'a> {
             // Inset half a texel, so filtering never reaches the atlas's
             // neighbouring images.
             let uv = [uv[0] + 0.5, uv[1] + 0.5, uv[2] - 1.0, uv[3] - 1.0];
-            self.push(rect, [1.0, 1.0, 1.0, alpha], [1.0; 4], [0.0, 0.0, 0.0, KIND_IMAGE], uv);
+            self.push(rect, [1.0, 1.0, 1.0, alpha], [1.0; 4], [radius, 0.0, 0.0, KIND_IMAGE], uv);
         }
         lookup
     }
@@ -216,6 +218,12 @@ impl<'a> Painter<'a> {
     /// Rounded rectangle with an inner border.
     pub fn bordered(&mut self, rect: Rect, fill: Color, radius: f32, border: f32, border_color: Color) {
         self.push(rect, fill, border_color, [radius, border, 0.0, KIND_SHAPE], [0.0; 4]);
+    }
+
+    /// Rounded rectangle shading from `top` to `bottom`, e.g. content
+    /// fading out at a scroll edge.
+    pub fn gradient(&mut self, rect: Rect, top: Color, bottom: Color, radius: f32) {
+        self.push(rect, top, bottom, [radius, 0.0, 0.0, KIND_GRADIENT], [0.0; 4]);
     }
 
     /// Soft shadow or glow: `rect` blurred by `blur` logical pixels.

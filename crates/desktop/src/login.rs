@@ -78,8 +78,8 @@ impl Login {
         self.scroll = (self.scroll + ui.scroll).clamp(0.0, (height + 32.0 - view.h).max(0.0));
         let top = ((view.h - height) * 0.5).max(16.0).round() - self.scroll.round();
         let card = Rect::new(((view.w - width) * 0.5).round(), top, width, height);
-        p.shadow(Rect::new(card.x, card.y + 8.0, card.w, card.h), t.shadow, theme::RADIUS, 24.0);
-        p.bordered(card, t.panel, theme::RADIUS, 1.0, t.border_strong);
+        p.shadow(Rect::new(card.x, card.y + 8.0, card.w, card.h), t.shadow, theme::RADIUS + 4.0, 32.0);
+        p.bordered(card, t.surface, theme::RADIUS + 4.0, 1.0, t.border_strong);
 
         let x = card.x + 32.0;
         let mut y = card.y + 32.0;

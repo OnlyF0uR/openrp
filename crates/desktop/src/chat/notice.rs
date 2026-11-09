@@ -59,7 +59,7 @@ impl Chat {
         let t = p.theme;
         let width = WIDTH.min(main.w - 32.0);
         let x = main.x + ((main.w - width) * 0.5).round();
-        let mut y = theme::HEADER_HEIGHT + 10.0;
+        let mut y = main.y + theme::HEADER_HEIGHT + 10.0;
         let (mut close, mut open) = (None, None);
         // The notices take the mouse: nothing beneath them reacts.
         let blocker = ui.blocker.take();
@@ -75,7 +75,7 @@ impl Chat {
             let card = Rect::new(x, y, width, text.height() + 2.0 * PAD + buttons_h);
             p.shadow(Rect::new(card.x, card.y + 4.0, card.w, card.h), t.shadow, theme::RADIUS, 14.0);
             let border = if notice.problem { fade(t.danger, 0.5) } else { t.border_strong };
-            p.bordered(card, t.panel, theme::RADIUS, 1.0, border);
+            p.bordered(card, t.surface, theme::RADIUS, 1.0, border);
             p.text(&text, card.x + PAD, card.y + PAD, t.text);
             if button(p, ui, Rect::new(card.right() - 32.0, card.y + 6.0, 26.0, 26.0), "×", ButtonStyle::Ghost, true) {
                 close = Some(index);

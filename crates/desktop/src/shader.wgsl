@@ -7,6 +7,8 @@
 //   1 = glyph, alpha sampled from the R8 atlas
 //   2 = image, RGBA sampled from the image atlas, clipped to a rounded
 //       rectangle (radius `params.x`) and faded by `color.a`
+//   3 = rounded rectangle filled with an eased vertical gradient from
+//       `color` (top) to `color2` (bottom)
 //
 // Geometry arrives in logical pixels and is scaled to physical pixels here.
 // Colours are straight-alpha sRGB; output is premultiplied.
@@ -105,6 +107,12 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
         let texel = textureSampleLevel(images, atlas_sampler, in.uv, 0.0);
         let d = rounded_box(in.local, in.half_size, in.params.x);
         color = vec4<f32>(texel.rgb, texel.a * in.color.a * clamp(0.5 - d, 0.0, 1.0));
+    } else if kind == 3.0 {
+        let d = rounded_box(in.local, in.half_size, in.params.x);
+        // Eased, so it settles into the colours at both ends without a seam.
+        let t = smoothstep(0.0, 1.0, (in.local.y + in.half_size.y) / max(2.0 * in.half_size.y, 1e-3));
+        let fill = mix(in.color, in.color2, t);
+        color = vec4<f32>(fill.rgb, fill.a * clamp(0.5 - d, 0.0, 1.0));
     } else {
         let d = rounded_box(in.local, in.half_size, in.params.x);
         let blur = in.params.z;
@@ -114,7 +122,11 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
             var fill = in.color;
             if in.params.y > 0.0 {
                 let inside = clamp(0.5 - (d + in.params.y), 0.0, 1.0);
-                fill = mix(in.color2, fill, inside);
+                // Premultiplied, so a border around a clear fill keeps its
+                // colour across the anti-aliased inner edge.
+                let border = vec4<f32>(in.color2.rgb * in.color2.a, in.color2.a);
+                let m = mix(border, vec4<f32>(fill.rgb * fill.a, fill.a), inside);
+                fill = vec4<f32>(m.rgb / max(m.a, 1e-5), m.a);
             }
             color = vec4<f32>(fill.rgb, fill.a * clamp(0.5 - d, 0.0, 1.0));
         }

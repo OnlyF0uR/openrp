@@ -93,131 +93,79 @@ impl Palette {
     }
 }
 
-/// Neutral graphite with a white accent. The default.
-pub const DARK: Palette = Palette {
-    bg: hex(0x161618),
-    panel: hex(0x1C1C1F),
-    surface: hex(0x212124),
-    hover: hex(0x2A2A2E),
-    active: hex(0x333338),
-    border: hex(0x2A2A2E),
-    border_strong: hex(0x3A3A40),
-    border_focus: hex(0x5A5A63),
-    text: hex(0xEDEDEF),
-    text_muted: hex(0xA0A0AB),
-    text_faint: hex(0x6B6B76),
-    accent: hex(0xEDEDEF),
-    on_accent: hex(0x161618),
+/// Near-black, lit only by white: the default.
+pub const BLACK: Palette = Palette {
+    bg: hex(0x121212),
+    panel: hex(0x080808),
+    surface: hex(0x1A1A1A),
+    hover: hex(0x1F1F1F),
+    active: hex(0x282828),
+    border: hex(0x222222),
+    border_strong: hex(0x303030),
+    border_focus: hex(0x4C4C4C),
+    text: hex(0xEDEDED),
+    text_muted: hex(0xA3A3A3),
+    text_faint: hex(0x6B6B6B),
+    accent: hex(0xEDEDED),
+    on_accent: hex(0x0A0A0A),
     selection: hexa(0xFFFFFF, 0.16),
-    danger: hex(0xEB6F6F),
-    shadow: hexa(0x000000, 0.5),
-    code_bg: hex(0x1B1B1E),
-    link: hex(0x8AB4F8),
-    scrim: hexa(0x0B0B0D, 0.62),
-    on_scrim: hex(0xF4F4F6),
+    danger: hex(0xF26D6D),
+    shadow: hexa(0x000000, 0.6),
+    code_bg: hex(0x171717),
+    link: hex(0x7DB3FF),
+    scrim: hexa(0x000000, 0.6),
+    on_scrim: hex(0xF5F5F5),
     // GitHub Dark.
     syntax: [hex(0xFF7B72), hex(0xA5D6FF), hex(0x79C0FF), hex(0x8B949E), hex(0xD2A8FF), hex(0xFFA657)],
 };
 
-/// Zed's "One Dark": slate greys with a blue accent.
-pub const BLUE: Palette = Palette {
-    bg: hex(0x282C33),
-    panel: hex(0x2F343E),
-    surface: hex(0x2F343E),
-    hover: hex(0x363C46),
-    active: hex(0x454A56),
-    border: hex(0x363C46),
-    border_strong: hex(0x464B57),
-    border_focus: hex(0x47679E),
-    text: hex(0xDCE0E5),
-    text_muted: hex(0xA9AFBC),
-    text_faint: hex(0x6F7581),
-    accent: hex(0x74ADE8),
-    on_accent: hex(0x1B1F25),
-    selection: hexa(0x74ADE8, 0.24),
-    danger: hex(0xD07277),
-    shadow: hexa(0x000000, 0.35),
-    code_bg: hex(0x23272E),
-    link: hex(0x74ADE8),
-    scrim: hexa(0x16191E, 0.62),
-    on_scrim: hex(0xF0F2F5),
-    // Zed One Dark.
-    syntax: [hex(0xB477CF), hex(0xA1C181), hex(0xBF956A), hex(0x5D636F), hex(0x73ADE9), hex(0x6EB4BF)],
-};
-
-/// Paper white with an ink accent.
-pub const LIGHT: Palette = Palette {
+/// Clean white with ink-black controls.
+pub const WHITE: Palette = Palette {
     bg: hex(0xFFFFFF),
-    panel: hex(0xF7F7F8),
+    panel: hex(0xF4F4F5),
     surface: hex(0xFFFFFF),
-    hover: hex(0xEDEDF0),
-    active: hex(0xE3E3E8),
-    border: hex(0xE8E8EC),
-    border_strong: hex(0xD6D6DC),
-    border_focus: hex(0xA0A0AB),
+    hover: hex(0xECECEE),
+    active: hex(0xE4E4E7),
+    border: hex(0xE6E6E9),
+    border_strong: hex(0xD6D6DB),
+    border_focus: hex(0xA1A1AA),
     text: hex(0x18181B),
-    text_muted: hex(0x5B5B66),
-    text_faint: hex(0x9A9AA5),
+    text_muted: hex(0x55555E),
+    text_faint: hex(0x9B9BA4),
     accent: hex(0x18181B),
-    on_accent: hex(0xFFFFFF),
-    selection: hexa(0x2563EB, 0.18),
-    danger: hex(0xD93636),
-    shadow: hexa(0x000000, 0.1),
-    code_bg: hex(0xF6F6F8),
+    on_accent: hex(0xFAFAFA),
+    selection: hexa(0x2563EB, 0.16),
+    danger: hex(0xDC2626),
+    shadow: hexa(0x0F0F14, 0.09),
+    code_bg: hex(0xF6F6F7),
     link: hex(0x2563EB),
-    scrim: hexa(0x0F0F12, 0.55),
+    scrim: hexa(0x0C0C0F, 0.55),
     on_scrim: hex(0xFFFFFF),
     // GitHub Light.
     syntax: [hex(0xCF222E), hex(0x0A3069), hex(0x0550AE), hex(0x6E7781), hex(0x8250DF), hex(0x953800)],
 };
 
-/// Warm charcoal lit by an amber accent, like a page by lamplight.
-pub const EMBER: Palette = Palette {
-    bg: hex(0x16130F),
-    panel: hex(0x1C1814),
-    surface: hex(0x221D18),
-    hover: hex(0x2C261F),
-    active: hex(0x362F27),
-    border: hex(0x2C261F),
-    border_strong: hex(0x3E362C),
-    border_focus: hex(0x7A6650),
-    text: hex(0xEFE6DA),
-    text_muted: hex(0xB3A794),
-    text_faint: hex(0x7C7061),
-    accent: hex(0xE8A55E),
-    on_accent: hex(0x1A140E),
-    selection: hexa(0xE8A55E, 0.22),
-    danger: hex(0xE5736A),
-    shadow: hexa(0x000000, 0.5),
-    code_bg: hex(0x1B1713),
-    link: hex(0xF2BA74),
-    scrim: hexa(0x0E0B08, 0.62),
-    on_scrim: hex(0xF6EEE3),
-    // Gruvbox Dark.
-    syntax: [hex(0xF07A62), hex(0xB8BB26), hex(0xD3869B), hex(0x928374), hex(0x83A598), hex(0xFABD2F)],
-};
-
-/// Old paper and sepia ink, with a burnt-sienna accent.
-pub const PARCHMENT: Palette = Palette {
-    bg: hex(0xF7F1E6),
-    panel: hex(0xEFE7D8),
-    surface: hex(0xFCF8F0),
-    hover: hex(0xE9DFCC),
-    active: hex(0xE0D4BE),
-    border: hex(0xE3D8C4),
-    border_strong: hex(0xD2C4AB),
-    border_focus: hex(0xA8916F),
-    text: hex(0x2A2118),
-    text_muted: hex(0x6B5B4B),
-    text_faint: hex(0x9C8C78),
-    accent: hex(0x9A4F1C),
-    on_accent: hex(0xFFF8EE),
-    selection: hexa(0x9A4F1C, 0.18),
-    danger: hex(0xC0392B),
-    shadow: hexa(0x3B2A14, 0.12),
-    code_bg: hex(0xF1E9DA),
-    link: hex(0x2F6690),
-    scrim: hexa(0x1E150C, 0.55),
+/// Warm cream and sepia with a copper accent: light, with little blue.
+pub const AMBER: Palette = Palette {
+    bg: hex(0xF8F3EA),
+    panel: hex(0xEFE8DC),
+    surface: hex(0xFDF9F2),
+    hover: hex(0xEAE1D2),
+    active: hex(0xE2D7C4),
+    border: hex(0xE5DBCA),
+    border_strong: hex(0xD5C7B0),
+    border_focus: hex(0xAE9A79),
+    text: hex(0x2E2419),
+    text_muted: hex(0x6E5F4C),
+    text_faint: hex(0xA3927A),
+    accent: hex(0xBF6129),
+    on_accent: hex(0xFFF8EF),
+    selection: hexa(0xBF6129, 0.2),
+    danger: hex(0xB93A2C),
+    shadow: hexa(0x3C280F, 0.1),
+    code_bg: hex(0xF1EADD),
+    link: hex(0xA3501C),
+    scrim: hexa(0x1E140A, 0.55),
     on_scrim: hex(0xFFF9F0),
     // Gruvbox Light.
     syntax: [hex(0x9D0006), hex(0x79740E), hex(0x8F3F71), hex(0x928374), hex(0x076678), hex(0xB57614)],
@@ -226,32 +174,26 @@ pub const PARCHMENT: Palette = Palette {
 /// The colour schemes offered in settings.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Scheme {
-    /// [`DARK`].
+    /// [`BLACK`].
     #[default]
-    Dark,
-    /// [`EMBER`].
-    Ember,
-    /// [`BLUE`].
-    Blue,
-    /// [`LIGHT`].
-    Light,
-    /// [`PARCHMENT`].
-    Parchment,
+    Black,
+    /// [`WHITE`].
+    White,
+    /// [`AMBER`].
+    Amber,
 }
 
 impl Scheme {
     /// Every scheme, in settings order.
-    pub const ALL: [Self; 5] = [Self::Dark, Self::Ember, Self::Blue, Self::Light, Self::Parchment];
+    pub const ALL: [Self; 3] = [Self::Black, Self::White, Self::Amber];
 
     /// Its colours.
     #[must_use]
     pub fn palette(self) -> &'static Palette {
         match self {
-            Self::Dark => &DARK,
-            Self::Ember => &EMBER,
-            Self::Blue => &BLUE,
-            Self::Light => &LIGHT,
-            Self::Parchment => &PARCHMENT,
+            Self::Black => &BLACK,
+            Self::White => &WHITE,
+            Self::Amber => &AMBER,
         }
     }
 
@@ -259,11 +201,9 @@ impl Scheme {
     #[must_use]
     pub fn label(self) -> &'static str {
         match self {
-            Self::Dark => "Dark",
-            Self::Ember => "Ember",
-            Self::Blue => "One Dark",
-            Self::Light => "Light",
-            Self::Parchment => "Parchment",
+            Self::Black => "Black",
+            Self::White => "White",
+            Self::Amber => "Amber",
         }
     }
 
@@ -271,18 +211,21 @@ impl Scheme {
     #[must_use]
     pub fn key(self) -> &'static str {
         match self {
-            Self::Dark => "dark",
-            Self::Ember => "ember",
-            Self::Blue => "blue",
-            Self::Light => "light",
-            Self::Parchment => "parchment",
+            Self::Black => "black",
+            Self::White => "white",
+            Self::Amber => "amber",
         }
     }
 
     /// Parses a config value; unknown values fall back to the default.
+    /// Schemes since retired map to the nearest one left.
     #[must_use]
     pub fn from_key(key: Option<&str>) -> Self {
-        Self::ALL.into_iter().find(|s| Some(s.key()) == key).unwrap_or_default()
+        match key {
+            Some("light") => Self::White,
+            Some("parchment") => Self::Amber,
+            _ => Self::ALL.into_iter().find(|s| Some(s.key()) == key).unwrap_or_default(),
+        }
     }
 
     /// Whether the OS chrome (title bar) should be light.
@@ -404,13 +347,19 @@ fn oklch(lightness: f32, chroma: f32, hue: f32) -> Color {
 }
 
 /// Corner radius of small elements: list rows, buttons.
-pub const RADIUS_SM: f32 = 4.0;
-/// Corner radius of containers: composer, menus, cards.
-pub const RADIUS: f32 = 6.0;
+pub const RADIUS_SM: f32 = 7.0;
+/// Corner radius of containers: menus, cards, dialogs.
+pub const RADIUS: f32 = 10.0;
+/// Corner radius of large surfaces: the composer and bubbles.
+pub const RADIUS_LG: f32 = 16.0;
+/// Corner radius of the canvas the main area sits on.
+pub const CANVAS_RADIUS: f32 = 12.0;
+/// Space between the window's edge and the canvas.
+pub const GAP: f32 = 8.0;
 /// Sidebar width.
-pub const SIDEBAR_WIDTH: f32 = 256.0;
+pub const SIDEBAR_WIDTH: f32 = 260.0;
 /// Height of the header bar above the main area.
-pub const HEADER_HEIGHT: f32 = 44.0;
+pub const HEADER_HEIGHT: f32 = 52.0;
 /// Maximum width of the message column.
 pub const COLUMN_WIDTH: f32 = 760.0;
 
@@ -424,6 +373,8 @@ pub const TINY: Style = Style::regular(11.5);
 pub const LABEL: Style = Style::semibold(13.0);
 /// Small headings and captions that need weight.
 pub const CAPTION: Style = Style::semibold(11.5);
+/// A page's name in its header.
+pub const HEADING: Style = Style::semibold(15.0);
 /// Page and section titles.
 pub const TITLE: Style = Style::semibold(22.0);
 /// What characters say and do, and the user's part of a story: a serif
@@ -433,6 +384,12 @@ pub const PROSE: Style = Style { font: FontId::SERIF, size: 15.5, line_height: 1
 pub const DISPLAY: Style = Style { font: FontId::SERIF_BOLD, size: 26.0, line_height: 1.25 };
 /// A scene card: where the story is, between the turns.
 pub const SCENE: Style = Style { font: FontId::SERIF_ITALIC, size: 15.0, line_height: 1.55 };
+
+/// An icon from the icon font, `size` pixels square.
+#[must_use]
+pub const fn icon(size: f32) -> Style {
+    Style { font: FontId::ICON, size, line_height: 1.0 }
+}
 
 #[cfg(test)]
 mod tests {
@@ -474,14 +431,14 @@ mod tests {
             assert_eq!(to_hex(oklch(l, c, h)[..3].try_into().unwrap()), hex);
         }
         let amber = parse_hex("#e8a55e").unwrap();
-        assert_eq!(character_color(&DARK, "Mira", "#e8a55e")[..3], amber, "readable on dark: as chosen");
-        assert!(!adjusted(&DARK, amber) && adjusted(&LIGHT, amber));
+        assert_eq!(character_color(&BLACK, "Mira", "#e8a55e")[..3], amber, "readable on dark: as chosen");
+        assert!(!adjusted(&BLACK, amber) && adjusted(&WHITE, amber));
         // Black on a dark scheme, white on a light one: moved to where they read.
         let luma = |c: Color| 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
-        assert!(luma(character_color(&DARK, "Shade", "#000000")) > 0.25);
-        assert!(luma(character_color(&LIGHT, "Ghost", "#ffffff")) < 0.5);
+        assert!(luma(character_color(&BLACK, "Shade", "#000000")) > 0.25);
+        assert!(luma(character_color(&WHITE, "Ghost", "#ffffff")) < 0.5);
         // Nothing chosen (or nonsense): from the name.
-        assert_eq!(character_color(&DARK, "Mira", "nope"), character_color(&DARK, "Mira", ""));
+        assert_eq!(character_color(&BLACK, "Mira", "nope"), character_color(&BLACK, "Mira", ""));
     }
 
     #[test]
@@ -489,7 +446,11 @@ mod tests {
         for scheme in Scheme::ALL {
             assert_eq!(Scheme::from_key(Some(scheme.key())), scheme);
         }
-        assert_eq!(Scheme::from_key(Some("neon")), Scheme::Dark);
-        assert_eq!(Scheme::from_key(None), Scheme::Dark);
+        assert_eq!(Scheme::from_key(Some("neon")), Scheme::Black);
+        assert_eq!(Scheme::from_key(None), Scheme::Black);
+        // Retired schemes land on the nearest one.
+        assert_eq!(Scheme::from_key(Some("ember")), Scheme::Black);
+        assert_eq!(Scheme::from_key(Some("light")), Scheme::White);
+        assert_eq!(Scheme::from_key(Some("parchment")), Scheme::Amber);
     }
 }

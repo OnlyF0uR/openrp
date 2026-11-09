@@ -684,8 +684,8 @@ impl Chat {
         if editing {
             p.rect(area, hexa(0x000000, 0.35), 0.0);
         }
-        p.shadow(Rect::new(card.x, card.y + 8.0, card.w, card.h), t.shadow, theme::RADIUS, 24.0);
-        p.bordered(card, t.panel, theme::RADIUS, 1.0, t.border_strong);
+        p.shadow(Rect::new(card.x, card.y + 8.0, card.w, card.h), t.shadow, theme::RADIUS + 4.0, 32.0);
+        p.bordered(card, t.surface, theme::RADIUS + 4.0, 1.0, t.border_strong);
         let clip = p.push_clip(view);
 
         let x = card.x + 24.0;
@@ -903,8 +903,8 @@ impl Chat {
             height,
         );
         p.rect(area, hexa(0x000000, 0.35), 0.0);
-        p.shadow(Rect::new(card.x, card.y + 8.0, card.w, card.h), t.shadow, theme::RADIUS, 24.0);
-        p.bordered(card, t.panel, theme::RADIUS, 1.0, t.border_strong);
+        p.shadow(Rect::new(card.x, card.y + 8.0, card.w, card.h), t.shadow, theme::RADIUS + 4.0, 32.0);
+        p.bordered(card, t.surface, theme::RADIUS + 4.0, 1.0, t.border_strong);
 
         let x = card.x + 24.0;
         let mut y = card.y + 24.0;

@@ -45,7 +45,10 @@ impl FontId {
     pub const SERIF_ITALIC: Self = Self(6);
     /// Literata SemiBold: emphasis and titles in a story.
     pub const SERIF_BOLD: Self = Self(7);
-    const EMBEDDED: usize = 8;
+    /// Lucide: the interface's icons, one per private-use character
+    /// (`ui::icon` names them).
+    pub const ICON: Self = Self(8);
+    const EMBEDDED: usize = 9;
 }
 
 /// A colour-glyph layer: glyph id and its colour, or `None` for "text colour".
@@ -91,9 +94,9 @@ impl Face {
     }
 
     /// Height of capital letters in font units (0.7 em when the font
-    /// does not say).
+    /// does not say, or says zero, as icon fonts do).
     pub fn cap_height(&self) -> f32 {
-        self.inner.capital_height().map_or(0.7 * self.units_per_em(), f32::from)
+        self.inner.capital_height().filter(|&h| h > 0).map_or(0.7 * self.units_per_em(), f32::from)
     }
 
     /// Advance width in font units.
@@ -369,6 +372,7 @@ impl Fonts {
                 embedded(include_bytes!("../assets/Literata-Regular.ttf")),
                 embedded(include_bytes!("../assets/Literata-Italic.ttf")),
                 embedded(include_bytes!("../assets/Literata-SemiBold.ttf")),
+                embedded(include_bytes!("../assets/Lucide.ttf")),
             ],
             fallbacks: system_fallbacks(),
             resolved: RefCell::default(),

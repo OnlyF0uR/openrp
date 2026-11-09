@@ -27,7 +27,7 @@ use crate::library::{FormAction, Kind, portrait};
 use crate::paint::{Painter, Rect, fade, mix};
 use crate::text::TextLayout;
 use crate::theme;
-use crate::ui::{ButtonStyle, Ui, button, edit_key, id};
+use crate::ui::{ButtonStyle, Ui, button, edit_key, icon, id};
 
 /// Height of a menu's row.
 const ROW_H: f32 = 30.0;
@@ -451,7 +451,7 @@ impl Chat {
             height,
         );
         p.shadow(Rect::new(card.x, card.y + 12.0, card.w, card.h), t.shadow, theme::RADIUS + 4.0, 32.0);
-        p.bordered(card, t.panel, theme::RADIUS + 4.0, 1.0, t.border_strong);
+        p.bordered(card, t.surface, theme::RADIUS + 4.0, 1.0, t.border_strong);
 
         // Title, what it is for, and the search.
         let (x, inner) = (card.x + 24.0, card.w - 48.0);
@@ -473,12 +473,13 @@ impl Chat {
         };
         let count = p.layout(&count, theme::SMALL, None);
         p.text(&count, field.right() - 12.0 - count.width(), field.y + (field.h - count.height()) * 0.5, t.text_faint);
-        let field_w = field.w - 36.0 - count.width();
+        let field_w = field.w - 64.0 - count.width();
         let (text, color) = if query.is_empty() { (content.header.0.as_str(), t.text_faint) } else { (query, t.text) };
         let mut layout = p.layout(text, theme::BODY, None);
         let caret_x = if query.is_empty() { 0.0 } else { layout.caret(self.menu_query.cursor()).0 };
         layout.truncate(p.fonts, field_w);
-        let origin = (field.x + 12.0, field.y + (field.h - layout.height()) * 0.5);
+        icon::draw(p, icon::SEARCH, (field.x + 20.0, field.y + field.h * 0.5), 16.0, t.text_faint);
+        let origin = (field.x + 38.0, field.y + (field.h - layout.height()) * 0.5);
         p.text(&layout, origin.0, origin.1, color);
         if ui.caret_visible() && caret_x <= field_w {
             let caret = Rect::new(origin.0 + caret_x - 1.0, origin.1 + 2.0, 2.0, layout.line_height() - 4.0);
@@ -622,7 +623,7 @@ impl Chat {
         let area = Rect::new(x, y, content.width, height);
         self.menu_rect = Some(area);
 
-        p.shadow(Rect::new(area.x, area.y + 6.0, area.w, area.h), t.shadow, theme::RADIUS, 18.0);
+        p.shadow(Rect::new(area.x, area.y + 8.0, area.w, area.h), t.shadow, theme::RADIUS, 24.0);
         p.bordered(area, t.surface, theme::RADIUS, 1.0, t.border_strong);
         if searched {
             // The search: what is typed while the menu is open lands here.
@@ -630,13 +631,14 @@ impl Chat {
             let note = if query.is_empty() { content.header.1.clone() } else { group_digits(rows.len() as u64) };
             let note = p.layout(&note, theme::CAPTION, None);
             p.text(&note, area.right() - 12.0 - note.width(), area.y + (header_h - note.height()) * 0.5, t.text_faint);
-            let field_w = area.w - 36.0 - note.width();
+            let field_w = area.w - 60.0 - note.width();
             let (text, color) =
                 if query.is_empty() { (content.header.0.as_str(), t.text_faint) } else { (query, t.text) };
             let mut layout = p.layout(text, theme::SMALL, None);
             let caret_x = if query.is_empty() { 0.0 } else { layout.caret(self.menu_query.cursor()).0 };
             layout.truncate(p.fonts, field_w);
-            let origin = (area.x + 12.0, area.y + (header_h - layout.height()) * 0.5);
+            icon::draw(p, icon::SEARCH, (area.x + 19.0, area.y + header_h * 0.5), 14.0, t.text_faint);
+            let origin = (area.x + 34.0, area.y + (header_h - layout.height()) * 0.5);
             p.text(&layout, origin.0, origin.1, color);
             if ui.caret_visible() && caret_x <= field_w {
                 p.rect(

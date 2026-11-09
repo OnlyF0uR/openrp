@@ -222,37 +222,44 @@ impl Chat {
         }
     }
 
-    /// Where the cast panel goes in `main`, if it shows: beside the story
-    /// when there is room for both (`true`), else over it. It shows for a
-    /// story once read, when the user opened it, or by itself when docked.
-    pub(super) fn cast_panel(&self, main: Rect) -> Option<(Rect, bool)> {
+    /// Where the cast panel goes in `area` (the window right of the
+    /// sidebar), if it shows: on the window beside the story's canvas when
+    /// there is room for both (`true`), else floating over the canvas, below
+    /// its header. It shows for a story once read, when the user opened it,
+    /// or by itself when docked.
+    pub(super) fn cast_panel(&self, area: Rect) -> Option<(Rect, bool)> {
         let conversation = self.conversations.iter().find(|c| c.id == self.current)?;
         if conversation.world.is_none() || conversation.load != Load::Loaded {
             return None;
         }
-        let docked = main.w - PANEL_W >= STAGE_MIN;
-        let height = main.h - theme::HEADER_HEIGHT;
-        self.cast_open
-            .unwrap_or(docked)
-            .then(|| (Rect::new(main.right() - PANEL_W, theme::HEADER_HEIGHT, PANEL_W, height), docked))
+        let docked = area.w - PANEL_W >= STAGE_MIN;
+        let (top, bottom) = (area.y + theme::GAP, area.bottom() - theme::GAP);
+        let rect = if docked {
+            Rect::new(area.right() - PANEL_W, top, PANEL_W, bottom - top)
+        } else {
+            let top = top + theme::HEADER_HEIGHT;
+            Rect::new(area.right() - theme::GAP - PANEL_W, top, PANEL_W, bottom - top)
+        };
+        self.cast_open.unwrap_or(docked).then_some((rect, docked))
     }
 
-    /// Shows the cast panel if it is hidden in `main`, or hides it.
-    pub(super) fn toggle_cast(&mut self, main: Rect) {
-        self.cast_open = Some(self.cast_panel(main).is_none());
+    /// Shows the cast panel if it is hidden in `area`, or hides it.
+    pub(super) fn toggle_cast(&mut self, area: Rect) {
+        self.cast_open = Some(self.cast_panel(area).is_none());
         if matches!(self.menu, Some(Menu::Member(_))) {
             self.menu = None;
         }
     }
 
-    /// Draws the header's Cast button ending at `right`: the faces of who is
-    /// in the scene, overlapping, and how many are cast. `open` while the
-    /// panel shows. Returns whether it was clicked; `None` outside a story.
+    /// Draws the header's Cast button ending at `right` in `bar`: the faces
+    /// of who is in the scene, overlapping, and how many are cast. `open`
+    /// while the panel shows. Returns whether it was clicked; `None`
+    /// outside a story.
     pub(super) fn draw_cast_button(
         &mut self,
         p: &mut Painter,
         ui: &mut Ui,
-        right: f32,
+        (bar, right): (Rect, f32),
         open: bool,
     ) -> Option<(Rect, bool)> {
         let t = p.theme;
@@ -275,11 +282,11 @@ impl Chat {
         let face = 22.0;
         let faces_w = if present.is_empty() { 0.0 } else { face + (present.len() - 1) as f32 * (face - 8.0) + 8.0 };
         let width = faces_w + label.width() + 22.0;
-        let rect = Rect::new(right - width, (theme::HEADER_HEIGHT - 30.0) * 0.5, width, 30.0);
+        let rect = Rect::new(right - width, bar.y + (bar.h - 30.0) * 0.5, width, 30.0);
         let hovered = ui.hovered(rect);
         let hover = ui.anim(id("cast-button"), f32::from(u8::from(hovered)));
         let fill = if open { mix(t.active, t.hover, hover) } else { fade(t.hover, hover) };
-        p.rect(rect, fill, theme::RADIUS);
+        p.rect(rect, fill, 15.0);
         let mut x = rect.x + 10.0;
         for (name, image, color) in &present {
             let disc = Rect::new(x, rect.y + (rect.h - face) * 0.5, face, face);
@@ -304,14 +311,14 @@ impl Chat {
         Some((rect, ui.clicked(rect)))
     }
 
-    /// Draws the cast panel in `panel` (see [`Chat::cast_panel`]) and
-    /// applies what was clicked in it. Returns the anchor of the open
-    /// member's menu.
+    /// Draws the cast panel in `panel`, `docked` or not (see
+    /// [`Chat::cast_panel`]), and applies what was clicked in it. Returns
+    /// the anchor of the open member's menu.
     pub(super) fn draw_cast_panel(
         &mut self,
         p: &mut Painter,
         ui: &mut Ui,
-        panel: Rect,
+        (panel, docked): (Rect, bool),
         actions: &mut Vec<Action>,
     ) -> Rect {
         let t = p.theme;
@@ -332,10 +339,13 @@ impl Chat {
             personas.iter().find(same).or_else(|| self.library.persona_named(&player.name)).map(|r| r.comment.clone())
         });
 
-        p.rect(panel, t.panel, 0.0);
-        p.rect(Rect::new(panel.x, panel.y, 1.0, panel.h), t.border, 0.0);
+        // Docked, it lies on the window; floating, it is a card over the story.
+        if !docked {
+            p.shadow(Rect::new(panel.x, panel.y + 8.0, panel.w, panel.h - 8.0), t.shadow, theme::RADIUS, 24.0);
+            p.bordered(panel, t.panel, theme::RADIUS, 1.0, t.border_strong);
+        }
         let footer = Rect::new(panel.x, panel.bottom() - FOOTER_H, panel.w, FOOTER_H);
-        let body = Rect::new(panel.x + 1.0, panel.y, panel.w - 1.0, footer.y - panel.y);
+        let body = Rect::new(panel.x + 1.0, panel.y + 1.0, panel.w - 2.0, footer.y - panel.y - 1.0);
         if ui.hovered(body) {
             self.cast_scroll += ui.scroll;
             ui.scroll = 0.0;
@@ -439,7 +449,8 @@ impl Chat {
             if !here && members.is_empty() {
                 continue;
             }
-            if here && !cast.is_empty() {
+            // The hint shows while the mouse is over the panel.
+            if here && !cast.is_empty() && interactive {
                 let hint = p.layout("Click to move in or out", theme::TINY, None);
                 p.text(&hint, x + content_w - hint.width(), y, t.text_faint);
             }
@@ -500,8 +511,8 @@ impl Chat {
         p.set_clip(clip);
         self.cast_content_h = y - top + 8.0;
 
-        // The footer: adding characters.
-        p.rect(Rect::new(footer.x, footer.y, footer.w, 1.0), t.border, 0.0);
+        // The footer: adding characters, with the list fading out above it.
+        p.gradient(Rect::new(body.x, footer.y - 24.0, body.w, 24.0), fade(t.panel, 0.0), t.panel, 0.0);
         let add = Rect::new(x, footer.y + (FOOTER_H - 36.0) * 0.5, content_w, 36.0);
         if button(p, ui, add, "+  Add characters", ButtonStyle::Secondary, true) {
             self.menu = if self.menu == Some(Menu::CastLibrary) { None } else { Some(Menu::CastLibrary) };
@@ -795,10 +806,12 @@ mod tests {
         assert!(chat.cast_panel(wide).is_none(), "no story, no panel");
         chat.play("w".into());
         let (rect, docked) = chat.cast_panel(wide).unwrap();
-        assert!(docked && (rect.right() - wide.right()).abs() < 0.5 && (rect.y - theme::HEADER_HEIGHT).abs() < 0.5);
+        assert!(docked && (rect.right() - wide.right()).abs() < 0.5 && (rect.y - theme::GAP).abs() < 0.5);
         assert!(chat.cast_panel(narrow).is_none(), "too narrow to dock: hidden until asked for");
         chat.toggle_cast(narrow);
-        assert_eq!(chat.cast_panel(narrow).map(|(_, docked)| docked), Some(false), "then it floats");
+        let (rect, docked) = chat.cast_panel(narrow).unwrap();
+        assert!(!docked, "then it floats");
+        assert!(rect.right() < narrow.right() && rect.y > theme::HEADER_HEIGHT, "over the canvas, below its header");
         chat.toggle_cast(wide);
         assert!(chat.cast_panel(wide).is_none(), "hidden by the user, it stays hidden");
     }

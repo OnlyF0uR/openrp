@@ -138,14 +138,13 @@ impl SettingsView {
     ) -> Option<Rect> {
         let t = p.theme;
         let bar = Rect::new(area.x, area.y, area.w, theme::HEADER_HEIGHT);
-        p.rect(Rect::new(bar.x, bar.bottom() - 1.0, bar.w, 1.0), t.border, 0.0);
-        let title = p.layout("Settings", theme::LABEL, None);
-        p.text(&title, bar.x + 16.0, bar.y + (bar.h - title.height()) * 0.5, t.text);
+        let title = p.layout("Settings", theme::HEADING, None);
+        p.text(&title, bar.x + 20.0, bar.y + (bar.h - title.height()) * 0.5, t.text);
         let close = p.layout("to close", theme::TINY, None);
         let close_x = bar.right() - 16.0 - close.width();
         p.text(&close, close_x, bar.y + (bar.h - close.height()) * 0.5, t.text_faint);
         keycap(p, "Esc", close_x - 6.0, bar.y + (bar.h - 20.0) * 0.5);
-        if let Some(tab) = tabs(p, ui, bar.x + 16.0 + title.width() + 20.0, bar, self.tab) {
+        if let Some(tab) = tabs(p, ui, bar.x + 20.0 + title.width() + 24.0, bar, self.tab) {
             self.tab = tab;
             self.scroll = 0.0;
         }
@@ -278,29 +277,27 @@ fn dropdown(p: &mut Painter, ui: &mut Ui, rect: Rect, label: &str) -> bool {
     ui.clicked(rect)
 }
 
-/// The tab strip in the header, starting at `x`; the open tab is underlined
-/// in the accent. Returns a newly clicked tab.
+/// The tabs in the header, as pills starting at `x`; the open one filled.
+/// Returns a newly clicked tab.
 fn tabs(p: &mut Painter, ui: &mut Ui, mut x: f32, bar: Rect, open: Tab) -> Option<Tab> {
     let t = p.theme;
     let mut clicked = None;
     for tab in Tab::ALL {
         let label = p.layout(tab.label(), theme::LABEL, None);
-        let cell = Rect::new(x, bar.y, label.width() + 24.0, bar.h);
-        let hovered = tab != open && ui.hovered(cell);
+        let pill = Rect::new(x, bar.y + (bar.h - 30.0) * 0.5, label.width() + 28.0, 30.0);
+        let hovered = tab != open && ui.hovered(pill);
         let hover = ui.anim(id(("settings-tab", tab.label())), f32::from(u8::from(hovered)));
-        p.rect(Rect::new(cell.x, cell.y + 8.0, cell.w, cell.h - 16.0), fade(t.hover, hover), theme::RADIUS_SM);
+        let fill = if tab == open { t.active } else { fade(t.hover, hover) };
+        p.rect(pill, fill, 15.0);
         let color = if tab == open { t.text } else { mix(t.text_muted, t.text, hover) };
-        p.text(&label, cell.x + 12.0, cell.y + (cell.h - label.height()) * 0.5, color);
-        if tab == open {
-            p.rect(Rect::new(cell.x + 8.0, cell.bottom() - 2.0, cell.w - 16.0, 2.0), t.accent, 1.0);
-        }
+        p.text(&label, pill.x + 14.0, pill.y + (pill.h - label.height()) * 0.5, color);
         if hovered {
             ui.cursor = winit::window::CursorIcon::Pointer;
-            if ui.clicked(cell) {
+            if ui.clicked(pill) {
                 clicked = Some(tab);
             }
         }
-        x += cell.w;
+        x += pill.w + 4.0;
     }
     clicked
 }
@@ -387,36 +384,32 @@ fn theme_card(p: &mut Painter, ui: &mut Ui, card: Rect, preview_h: f32, scheme: 
     ui.clicked(card)
 }
 
-/// A miniature of the app drawn in `c`'s colours.
+/// A miniature of the app drawn in `c`'s colours: the sidebar on the
+/// window, the story on its canvas.
 fn preview(p: &mut Painter, r: Rect, c: &Palette) {
-    p.bordered(r, c.bg, theme::RADIUS_SM, 1.0, c.border_strong);
-    let inner = Rect::new(r.x + 1.0, r.y + 1.0, r.w - 2.0, r.h - 2.0);
+    p.bordered(r, c.panel, theme::RADIUS_SM, 1.0, c.border_strong);
 
-    // Sidebar: rounded on the left only, with a hairline on its right.
-    let side = Rect::new(inner.x, inner.y, (inner.w * 0.3).round(), inner.h);
-    p.rect(side, c.panel, theme::RADIUS_SM - 1.0);
-    p.rect(Rect::new(side.right() - 4.0, side.y, 4.0, side.h), c.panel, 0.0);
-    p.rect(Rect::new(side.right(), side.y, 1.0, side.h), c.border, 0.0);
-    p.rect(Rect::new(side.x + 4.0, side.y + 17.0, side.w - 8.0, 10.0), c.active, 2.0);
-    for (i, w) in [0.5, 0.7, 0.55, 0.62, 0.45].into_iter().enumerate() {
-        let alpha = if i == 1 { 0.9 } else { 0.45 };
-        p.rect(
-            Rect::new(side.x + 7.0, side.y + 8.0 + i as f32 * 10.0, (side.w - 14.0) * w, 3.0),
-            fade(c.text_muted, alpha),
-            1.5,
-        );
+    // Sidebar: the selected row, then a few more.
+    let side = Rect::new(r.x + 1.0, r.y + 1.0, (r.w * 0.28).round(), r.h - 2.0);
+    p.rect(Rect::new(side.x + 5.0, side.y + 7.0, side.w - 10.0, 9.0), c.border_strong, 4.0);
+    p.rect(Rect::new(side.x + 5.0, side.y + 21.0, side.w - 10.0, 9.0), c.active, 3.0);
+    for (i, w) in [0.6, 0.5, 0.7, 0.45].into_iter().enumerate() {
+        let row = Rect::new(side.x + 8.0, side.y + 36.0 + i as f32 * 9.0, (side.w - 16.0) * w, 3.0);
+        p.rect(row, fade(c.text_muted, 0.45), 1.5);
     }
 
-    // Chat: a prompt box, reply lines and the composer with its send button.
-    let main = Rect::new(side.right() + 1.0, inner.y, inner.right() - side.right() - 1.0, inner.h);
-    let pad = (main.w * 0.1).round();
-    let col = Rect::new(main.x + pad, main.y, main.w - 2.0 * pad, main.h);
-    p.bordered(Rect::new(col.x, col.y + 10.0, col.w, 12.0), c.surface, 2.0, 1.0, c.border);
-    p.rect(Rect::new(col.x + 5.0, col.y + 14.5, col.w * 0.4, 3.0), fade(c.text, 0.7), 1.5);
-    for (i, w) in [0.92, 0.84, 0.6].into_iter().enumerate() {
-        p.rect(Rect::new(col.x, col.y + 30.0 + i as f32 * 8.0, col.w * w, 3.0), fade(c.text, 0.55), 1.5);
+    // The canvas: bubbles and the composer with its send button.
+    let canvas = Rect::new(side.right(), r.y + 5.0, r.right() - 5.0 - side.right(), r.h - 10.0);
+    p.bordered(canvas, c.bg, 5.0, 1.0, c.border);
+    let pad = (canvas.w * 0.1).round();
+    let col = Rect::new(canvas.x + pad, canvas.y, canvas.w - 2.0 * pad, canvas.h);
+    for (i, w) in [0.9, 0.7].into_iter().enumerate() {
+        let y = col.y + 9.0 + i as f32 * 20.0;
+        p.rect(Rect::new(col.x, y + 1.0, 7.0, 7.0), fade(c.text_muted, 0.5), 3.5);
+        p.bordered(Rect::new(col.x + 11.0, y, (col.w - 11.0) * w, 14.0), c.surface, 4.0, 1.0, c.border);
+        p.rect(Rect::new(col.x + 15.0, y + 5.5, (col.w - 11.0) * w * 0.6, 3.0), fade(c.text, 0.55), 1.5);
     }
-    let composer = Rect::new(col.x, main.bottom() - 22.0, col.w, 16.0);
-    p.bordered(composer, c.surface, 3.0, 1.0, c.border_strong);
-    p.rect(Rect::new(composer.right() - 13.0, composer.y + 3.0, 10.0, 10.0), c.accent, 2.0);
+    let composer = Rect::new(col.x, canvas.bottom() - 22.0, col.w, 16.0);
+    p.bordered(composer, c.surface, 6.0, 1.0, c.border_strong);
+    p.rect(Rect::new(composer.right() - 13.0, composer.y + 3.0, 10.0, 10.0), c.accent, 5.0);
 }

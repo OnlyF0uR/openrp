@@ -20,6 +20,8 @@ mod messages;
 mod names;
 mod notice;
 mod sidebar;
+#[cfg(test)]
+mod snapshot;
 mod stream;
 mod tools;
 mod turns;
@@ -1434,8 +1436,17 @@ impl Chat {
 
     /// Draws the screen.
     pub fn draw(&mut self, p: &mut Painter, ui: &mut Ui, view: Rect, scheme: Scheme, actions: &mut Vec<Action>) {
+        // The sidebar and the cast panel sit on the window; the page floats
+        // between them on a rounded canvas.
         let sidebar = Rect::new(0.0, 0.0, theme::SIDEBAR_WIDTH, view.h);
-        let main = Rect::new(sidebar.w, 0.0, view.w - sidebar.w, view.h);
+        let area = Rect::new(sidebar.w, 0.0, view.w - sidebar.w, view.h);
+        let docked = match self.page {
+            Page::Chat => self.cast_panel(area).filter(|(_, docked)| *docked).map(|(rect, _)| rect),
+            _ => None,
+        };
+        let main = canvas(area, docked);
+        p.rect(view, p.theme.panel, 0.0);
+        p.bordered(main, p.theme.bg, theme::CANVAS_RADIUS, 1.0, p.theme.border);
 
         // Overlays are drawn last, on top. Spotlight blocks everything
         // beneath it; an open menu blocks its own area (rect from last frame).
@@ -1488,7 +1499,7 @@ impl Chat {
                 let editing = self.character_form.is_some() && !self.current().needs_player();
                 let covered = ui.blocker;
                 // The cast panel beside the story, or floating over it.
-                let panel = self.cast_panel(main);
+                let panel = self.cast_panel(area);
                 let floating = panel.filter(|(_, docked)| !docked).map(|(rect, _)| rect);
                 if editing && !modal {
                     ui.blocker = Some(main);
@@ -1496,13 +1507,10 @@ impl Chat {
                     ui.blocker = floating;
                 }
                 if self.draw_header(p, ui, main, panel.is_some()) {
-                    self.toggle_cast(main);
+                    self.toggle_cast(area);
                 }
-                let stage = match panel {
-                    Some((rect, true)) => Rect::new(main.x, main.y, rect.x - main.x, main.h),
-                    _ => main,
-                };
-                let top = theme::HEADER_HEIGHT;
+                let stage = main;
+                let top = main.y + theme::HEADER_HEIGHT;
                 let toolbar = if self.current().needs_player() {
                     self.draw_character_form(p, ui, Rect::new(stage.x, top, stage.w, stage.h - top), actions);
                     [Rect::default(); 3]
@@ -1517,7 +1525,7 @@ impl Chat {
                     toolbar
                 };
                 ui.blocker = if editing && !modal { Some(main) } else { covered };
-                let member_menu = panel.map(|(rect, _)| self.draw_cast_panel(p, ui, rect, actions)).unwrap_or_default();
+                let member_menu = panel.map(|panel| self.draw_cast_panel(p, ui, panel, actions)).unwrap_or_default();
                 if editing {
                     ui.blocker = covered;
                     self.draw_character_form(p, ui, main, actions);
@@ -1526,6 +1534,7 @@ impl Chat {
                 [model_button, reasoning_button, card, member_menu]
             }
         };
+        frame(p, main);
         if !modal {
             ui.blocker = None;
         }
@@ -1576,29 +1585,28 @@ impl Chat {
     /// world's picture. Returns whether the Cast button was clicked.
     fn draw_header(&mut self, p: &mut Painter, ui: &mut Ui, main: Rect, cast_open: bool) -> bool {
         let t = p.theme;
-        let bar = Rect::new(main.x, 0.0, main.w, theme::HEADER_HEIGHT);
+        let bar = Rect::new(main.x, main.y, main.w, theme::HEADER_HEIGHT);
         let conversation = self.current();
         let (tokens, cost) = (conversation.tokens(), conversation.cost());
         let (world, title) = (conversation.world.clone(), conversation.title.clone());
         let world = world.map(|id| self.library.get(Kind::World, &id));
-        // The world's colours, softly, behind the title.
+        // The world's colours wash the top of the canvas and fade into it.
         if let Some(path) = world.flatten().and_then(|w| self.library.portrait_path(&w.portrait)) {
-            p.backdrop(&path, bar, if t.is_light() { 0.35 } else { 0.5 });
-            p.rect(bar, fade(t.bg, 0.55), 0.0);
+            // Inside the canvas's outline, its top corners rounded like the
+            // canvas; the lower ones fall below the clip, where it has faded.
+            let radius = theme::CANVAS_RADIUS - 1.0;
+            let shown = Rect::new(main.x + 1.0, main.y + 1.0, main.w - 2.0, (main.h * 0.4).min(260.0));
+            let wash = Rect::new(shown.x, shown.y, shown.w, shown.h + radius);
+            let saved = p.push_clip(shown);
+            p.backdrop(&path, wash, radius, if t.is_light() { 0.45 } else { 0.6 });
+            p.gradient(wash, fade(t.bg, 0.4), t.bg, radius);
+            p.set_clip(saved);
         }
-        p.rect(Rect::new(bar.x, bar.bottom() - 1.0, bar.w, 1.0), t.border, 0.0);
-        // The world first, then what this story is about.
         let world = world.map(|w| w.map_or("A deleted world".to_owned(), |w| w.name.clone()));
-        let title = match (world, title.is_empty()) {
-            (Some(world), true) => world,
-            (Some(world), false) => format!("{world}  ·  {title}"),
-            (None, true) => "No story yet".to_owned(),
-            (None, false) => title,
-        };
 
         let mut right = bar.right() - 12.0;
         let mut toggled = false;
-        if let Some((button, clicked)) = self.draw_cast_button(p, ui, right, cast_open) {
+        if let Some((button, clicked)) = self.draw_cast_button(p, ui, (bar, right), cast_open) {
             right = button.x - 16.0;
             toggled = clicked;
         } else {
@@ -1616,9 +1624,25 @@ impl Chat {
             p.text(&spent, right, bar.y + (bar.h - spent.height()) * 0.5, t.text_faint);
             right -= 20.0;
         }
-        let mut layout = p.layout(&title, theme::LABEL, None);
-        layout.truncate(p.fonts, (right - bar.x - 16.0).max(40.0));
-        p.text(&layout, bar.x + 16.0, bar.y + (bar.h - layout.height()) * 0.5, t.text);
+        // The world, then what this story is about: "Panem / The reaping".
+        let x = bar.x + 20.0;
+        // Draws `text` at `x`, cut to `max`; returns where it ends.
+        let crumb = |p: &mut Painter, text: &str, x: f32, max: f32, color| {
+            let mut layout = p.layout(text, theme::LABEL, None);
+            layout.truncate(p.fonts, max.max(20.0));
+            p.text(&layout, x, bar.y + (bar.h - layout.height()) * 0.5, color);
+            x + layout.width()
+        };
+        match (world, title.is_empty()) {
+            (Some(world), false) => {
+                let x = crumb(p, &world, x, (right - x) * 0.4, t.text_muted) + 10.0;
+                let x = crumb(p, "/", x, 20.0, t.text_faint) + 10.0;
+                crumb(p, &title, x, right - x, t.text);
+            }
+            (Some(only), true) => _ = crumb(p, &only, x, right - x, t.text),
+            (None, false) => _ = crumb(p, &title, x, right - x, t.text),
+            (None, true) => {}
+        }
         toggled
     }
 
@@ -1626,6 +1650,35 @@ impl Chat {
     fn column(main: Rect) -> (f32, f32) {
         let width = theme::COLUMN_WIDTH.min(main.w - 64.0);
         (main.x + ((main.w - width) * 0.5).round(), width)
+    }
+}
+
+/// The canvas the page floats on in `area` (the window right of the
+/// sidebar): inset from the window's edges, and reaching up to a `docked`
+/// cast panel, which keeps its own margin.
+fn canvas(area: Rect, docked: Option<Rect>) -> Rect {
+    let right = docked.map_or(area.right() - theme::GAP, |panel| panel.x);
+    Rect::new(area.x, area.y + theme::GAP, right - area.x, area.h - 2.0 * theme::GAP)
+}
+
+/// Rounds the canvas's corners again over whatever was drawn into them.
+fn frame(p: &mut Painter, canvas: Rect) {
+    let window = p.theme.panel;
+    let r = theme::CANVAS_RADIUS;
+    for (left, top) in [(true, true), (false, true), (true, false), (false, false)] {
+        // The corner's square, and a box twice its size whose curve is the canvas's.
+        let corner = Rect::new(
+            if left { canvas.x } else { canvas.right() - r },
+            if top { canvas.y } else { canvas.bottom() - r },
+            r,
+            r,
+        );
+        let curve = (if left { corner.x } else { corner.x - r }, if top { corner.y } else { corner.y - r });
+        // Inside the square, a ring of the window's colour whose inner edge
+        // is that curve: only what lies outside it is painted.
+        let saved = p.push_clip(corner);
+        p.bordered(Rect::new(curve.0 - r, curve.1 - r, 4.0 * r, 4.0 * r), [0.0; 4], 2.0 * r, r, window);
+        p.set_clip(saved);
     }
 }
 

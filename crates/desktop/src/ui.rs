@@ -147,6 +147,76 @@ pub fn id(key: impl Hash) -> u64 {
     h.finish()
 }
 
+/// Glyphs of the icon font ([`theme::icon`]), Lucide's, by name, and
+/// [`icon::draw`] to draw one.
+pub mod icon {
+    use crate::paint::{Color, Painter};
+    use crate::theme;
+
+    /// Draws `glyph`, `size` pixels square, centred on `(cx, cy)`.
+    pub fn draw(p: &mut Painter, glyph: char, (cx, cy): (f32, f32), size: f32, color: Color) {
+        let mut bytes = [0; 4];
+        let layout = p.layout(glyph.encode_utf8(&mut bytes), theme::icon(size), None);
+        // Lucide draws an em up from the baseline, which the layout puts
+        // 0.85 em down: the glyph's middle is 0.35 em below the top.
+        p.text(&layout, (cx - layout.width() * 0.5).round(), (cy - size * 0.35).round(), color);
+    }
+
+    /// Arrow pointing up: send.
+    pub const ARROW_UP: char = '\u{e04a}';
+    /// A brain: reasoning.
+    pub const BRAIN: char = '\u{e3c6}';
+    /// A tick.
+    pub const CHECK: char = '\u{e06c}';
+    /// Chevron pointing down.
+    pub const CHEVRON_DOWN: char = '\u{e06d}';
+    /// Chevron pointing right.
+    pub const CHEVRON_RIGHT: char = '\u{e06f}';
+    /// Chevron pointing left.
+    pub const CHEVRON_LEFT: char = '\u{e06e}';
+    /// A pen on a square: edit.
+    pub const PEN: char = '\u{e172}';
+    /// A circle of arrows: regenerate.
+    pub const REFRESH: char = '\u{e145}';
+    /// A bin: delete.
+    pub const TRASH: char = '\u{e18e}';
+    /// Two sheets: copy.
+    pub const COPY: char = '\u{e09e}';
+    /// Two masks: personas.
+    pub const DRAMA: char = '\u{e521}';
+    /// Three dots: more.
+    pub const ELLIPSIS: char = '\u{e0b6}';
+    /// A quill: the brand.
+    pub const FEATHER: char = '\u{e0be}';
+    /// A globe: worlds.
+    pub const GLOBE: char = '\u{e0e8}';
+    /// A plus: new.
+    pub const PLUS: char = '\u{e13d}';
+    /// A magnifier: search.
+    pub const SEARCH: char = '\u{e151}';
+    /// A cog: settings.
+    pub const SETTINGS: char = '\u{e154}';
+    /// Two people: characters.
+    pub const USERS: char = '\u{e1a4}';
+    /// A wand with sparkles: the AI writes it.
+    pub const WAND: char = '\u{e357}';
+}
+
+/// A square ghost button showing `glyph`, faint until hovered. Returns
+/// whether it was clicked.
+pub fn icon_button(p: &mut Painter, ui: &mut Ui, rect: Rect, glyph: char, enabled: bool) -> bool {
+    let t = p.theme;
+    let hovered = enabled && ui.hovered(rect);
+    let hover = ui.anim(id(("icon-button", rect.x.to_bits(), rect.y.to_bits())), f32::from(u8::from(hovered)));
+    p.rect(rect, fade(t.hover, hover), theme::RADIUS_SM);
+    let color = if enabled { mix(t.text_muted, t.text, hover) } else { fade(t.text_faint, 0.6) };
+    icon::draw(p, glyph, (rect.x + rect.w * 0.5, rect.y + rect.h * 0.5), 15.0, color);
+    if hovered {
+        ui.cursor = CursorIcon::Pointer;
+    }
+    hovered && ui.clicked(rect)
+}
+
 /// Visual weight of a button.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum ButtonStyle {
@@ -174,7 +244,7 @@ pub fn button(p: &mut Painter, ui: &mut Ui, rect: Rect, label: &str, style: Butt
         ButtonStyle::Danger => t.danger,
     };
     match style {
-        ButtonStyle::Primary if enabled => p.rect(rect, fade(t.accent, 1.0 - 0.14 * hover), radius),
+        ButtonStyle::Primary if enabled => p.rect(rect, fade(t.accent, 1.0 - 0.12 * hover), radius),
         ButtonStyle::Primary => p.rect(rect, t.hover, radius),
         ButtonStyle::Secondary => p.bordered(rect, mix(t.surface, t.hover, hover), radius, 1.0, t.border_strong),
         ButtonStyle::Ghost => p.rect(rect, fade(t.hover, hover), radius),
@@ -189,25 +259,17 @@ pub fn button(p: &mut Painter, ui: &mut Ui, rect: Rect, label: &str, style: Butt
     enabled && ui.clicked(rect)
 }
 
-/// Draws the brand mark: a flat accent square with an "S".
+/// Draws the brand mark: a quill on an accent tile.
 pub fn logo(p: &mut Painter, rect: Rect) {
-    p.rect(rect, p.theme.accent, rect.w * 0.22);
-    p.label_centered("S", crate::text::Style::semibold(rect.w * 0.56), rect, p.theme.on_accent);
+    p.rect(rect, p.theme.accent, rect.w * 0.28);
+    icon::draw(p, icon::FEATHER, (rect.x + rect.w * 0.5, rect.y + rect.h * 0.5), rect.w * 0.56, p.theme.on_accent);
 }
 
-/// A small chevron built from pixel-snapped squares (no icon font needed),
-/// pointing down when `open`, right otherwise. `(x, y)` is its top-left.
+/// A small chevron in a 7-pixel box whose top-left is `(x, y)`, pointing
+/// down when `open`, right otherwise.
 pub fn chevron(p: &mut Painter, x: f32, y: f32, open: bool, color: Color) {
-    for i in 0..4 {
-        let d = i as f32;
-        if open {
-            p.rect(Rect::new(x + d, y + d, 1.5, 1.5), color, 0.0);
-            p.rect(Rect::new(x + 6.0 - d, y + d, 1.5, 1.5), color, 0.0);
-        } else {
-            p.rect(Rect::new(x + d, y + d, 1.5, 1.5), color, 0.0);
-            p.rect(Rect::new(x + d, y + 6.0 - d, 1.5, 1.5), color, 0.0);
-        }
-    }
+    let glyph = if open { icon::CHEVRON_DOWN } else { icon::CHEVRON_RIGHT };
+    icon::draw(p, glyph, (x + 3.5, y + 3.5), 14.0, color);
 }
 
 /// Draws a keyboard shortcut in a key cap whose right edge is at `right`.
@@ -216,7 +278,7 @@ pub fn keycap(p: &mut Painter, keys: &str, right: f32, y: f32) -> f32 {
     let t = p.theme;
     let text = p.layout(keys, theme::TINY, None);
     let cap = Rect::new(right - text.width() - 12.0, y, text.width() + 12.0, 20.0);
-    p.bordered(cap, t.surface, theme::RADIUS_SM, 1.0, t.border_strong);
+    p.bordered(cap, t.surface, 5.0, 1.0, t.border_strong);
     p.text(&text, cap.x + 6.0, cap.y + (cap.h - text.height()) * 0.5, t.text_muted);
     cap.w
 }
@@ -289,4 +351,43 @@ pub fn edit_key(editor: &mut Editor, event: &KeyEvent, mods: ModifiersState, cb:
         },
     }
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::icon;
+    use crate::text::{FontId, Fonts, TextLayout};
+    use crate::theme;
+
+    #[test]
+    fn icons_are_square_glyphs_of_the_icon_font() {
+        let fonts = Fonts::load();
+        let all = [
+            icon::ARROW_UP,
+            icon::BRAIN,
+            icon::CHECK,
+            icon::CHEVRON_DOWN,
+            icon::CHEVRON_RIGHT,
+            icon::CHEVRON_LEFT,
+            icon::PEN,
+            icon::REFRESH,
+            icon::TRASH,
+            icon::COPY,
+            icon::DRAMA,
+            icon::ELLIPSIS,
+            icon::FEATHER,
+            icon::GLOBE,
+            icon::PLUS,
+            icon::SEARCH,
+            icon::SETTINGS,
+            icon::USERS,
+            icon::WAND,
+        ];
+        for glyph in all {
+            assert_eq!(fonts.resolve(FontId::ICON, glyph, None).0, FontId::ICON, "{:x}", u32::from(glyph));
+            // `icon::draw` centres on the advance: it must be the em.
+            let layout = TextLayout::new(&fonts, &glyph.to_string(), theme::icon(16.0), None, 1.0);
+            assert!((layout.width() - 16.0).abs() < 0.5, "{:x}: {}", u32::from(glyph), layout.width());
+        }
+    }
 }

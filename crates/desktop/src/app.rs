@@ -1486,7 +1486,7 @@ fn set_icon(window: &Window) {
 }
 
 /// Minimal executor for wgpu's initialisation futures.
-fn block_on<F: Future>(future: F) -> F::Output {
+pub(crate) fn block_on<F: Future>(future: F) -> F::Output {
     struct Unpark(std::thread::Thread);
     impl std::task::Wake for Unpark {
         fn wake(self: Arc<Self>) {

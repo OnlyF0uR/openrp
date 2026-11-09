@@ -159,7 +159,7 @@ impl ColorPicker {
         let card = Rect::new(x, y, WIDTH, height);
         self.rect = Some(card);
         p.shadow(Rect::new(card.x, card.y + 8.0, card.w, card.h), t.shadow, theme::RADIUS + 2.0, 22.0);
-        p.bordered(card, t.panel, theme::RADIUS + 2.0, 1.0, t.border_strong);
+        p.bordered(card, t.surface, theme::RADIUS + 2.0, 1.0, t.border_strong);
         let mut result = Pick::Stay;
 
         // The presets.

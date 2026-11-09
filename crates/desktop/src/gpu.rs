@@ -105,6 +105,15 @@ pub struct Renderer {
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
+    draw: Draw,
+    /// Raised when the device is lost (driver reset or update, GPU
+    /// switched): the renderer must be created again.
+    lost: Arc<AtomicBool>,
+}
+
+/// The pipeline, its atlases and buffers: what draws a frame, whatever
+/// texture it lands in.
+struct Draw {
     pipeline: wgpu::RenderPipeline,
     bind_group: wgpu::BindGroup,
     globals: wgpu::Buffer,
@@ -113,9 +122,6 @@ pub struct Renderer {
     images: wgpu::Texture,
     instances: wgpu::Buffer,
     linear_output: bool,
-    /// Raised when the device is lost (driver reset or update, GPU
-    /// switched): the renderer must be created again.
-    lost: Arc<AtomicBool>,
 }
 
 impl Renderer {
@@ -182,7 +188,69 @@ impl Renderer {
             view_formats: Vec::new(),
         };
         surface.configure(&device, &config);
+        let draw = Draw::new(&device, format);
+        Ok(Self { surface, device, queue, config, draw, lost })
+    }
 
+    /// The device was lost: drawing does nothing until the renderer is
+    /// created again (with fresh atlases, which lived on the old device).
+    #[must_use]
+    pub fn is_lost(&self) -> bool {
+        self.lost.load(Ordering::Relaxed)
+    }
+
+    /// Resizes the swapchain. Zero-sized (minimised) windows are ignored.
+    pub fn resize(&mut self, width: u32, height: u32) {
+        if width == 0 || height == 0 {
+            return;
+        }
+        self.config.width = width;
+        self.config.height = height;
+        self.surface.configure(&self.device, &self.config);
+    }
+
+    /// Uploads pending glyphs and thumbnails and draws `instances` over `clear`.
+    pub fn render(
+        &mut self,
+        instances: &[Instance],
+        glyphs: &mut Vec<Upload>,
+        images: &mut Vec<Upload>,
+        scale: f32,
+        clear: [f32; 4],
+    ) -> Frame {
+        if self.is_lost() {
+            return Frame::Skipped;
+        }
+        self.draw.upload(&self.queue, glyphs, images);
+        let frame = match self.surface.get_current_texture() {
+            wgpu::CurrentSurfaceTexture::Success(frame) => frame,
+            wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
+                // Draw this one, reconfigure for the next.
+                self.surface.configure(&self.device, &self.config);
+                frame
+            }
+            wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
+                self.surface.configure(&self.device, &self.config);
+                return Frame::Retry;
+            }
+            wgpu::CurrentSurfaceTexture::Timeout
+            | wgpu::CurrentSurfaceTexture::Occluded
+            | wgpu::CurrentSurfaceTexture::Validation => {
+                return Frame::Skipped;
+            }
+        };
+        let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let size = (self.config.width, self.config.height);
+        let commands = self.draw.encode(&self.device, &self.queue, (&view, size), instances, scale, clear);
+        self.queue.submit([commands]);
+        self.queue.present(frame);
+        Frame::Drawn
+    }
+}
+
+impl Draw {
+    /// Builds the pipeline for targets of `format`.
+    fn new(device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("ui"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
@@ -308,28 +376,8 @@ impl Renderer {
             cache: None,
         });
 
-        let instances = Self::instance_buffer(&device, 1024);
-        Ok(Self {
-            surface,
-            device,
-            queue,
-            config,
-            pipeline,
-            bind_group,
-            globals,
-            atlas,
-            images,
-            instances,
-            linear_output: format.is_srgb(),
-            lost,
-        })
-    }
-
-    /// The device was lost: drawing does nothing until the renderer is
-    /// created again (with fresh atlases, which lived on the old device).
-    #[must_use]
-    pub fn is_lost(&self) -> bool {
-        self.lost.load(Ordering::Relaxed)
+        let instances = Self::instance_buffer(device, 1024);
+        Self { pipeline, bind_group, globals, atlas, images, instances, linear_output: format.is_srgb() }
     }
 
     fn instance_buffer(device: &wgpu::Device, capacity: usize) -> wgpu::Buffer {
@@ -341,31 +389,11 @@ impl Renderer {
         })
     }
 
-    /// Resizes the swapchain. Zero-sized (minimised) windows are ignored.
-    pub fn resize(&mut self, width: u32, height: u32) {
-        if width == 0 || height == 0 {
-            return;
-        }
-        self.config.width = width;
-        self.config.height = height;
-        self.surface.configure(&self.device, &self.config);
-    }
-
-    /// Uploads pending glyphs and thumbnails and draws `instances` over `clear`.
-    pub fn render(
-        &mut self,
-        instances: &[Instance],
-        glyphs: &mut Vec<Upload>,
-        images: &mut Vec<Upload>,
-        scale: f32,
-        clear: [f32; 4],
-    ) -> Frame {
-        if self.is_lost() {
-            return Frame::Skipped;
-        }
+    /// Copies pending glyphs and thumbnails into the atlases.
+    fn upload(&self, queue: &wgpu::Queue, glyphs: &mut Vec<Upload>, images: &mut Vec<Upload>) {
         for (texture, bytes_per_texel, uploads) in [(&self.atlas, 1, glyphs), (&self.images, 4, images)] {
             for upload in uploads.drain(..) {
-                self.queue.write_texture(
+                queue.write_texture(
                     wgpu::TexelCopyTextureInfo {
                         texture,
                         mip_level: 0,
@@ -382,50 +410,43 @@ impl Renderer {
                 );
             }
         }
+    }
 
-        let frame = match self.surface.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(frame) => frame,
-            wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
-                // Draw this one, reconfigure for the next.
-                self.surface.configure(&self.device, &self.config);
-                frame
-            }
-            wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
-                self.surface.configure(&self.device, &self.config);
-                return Frame::Retry;
-            }
-            wgpu::CurrentSurfaceTexture::Timeout
-            | wgpu::CurrentSurfaceTexture::Occluded
-            | wgpu::CurrentSurfaceTexture::Validation => {
-                return Frame::Skipped;
-            }
-        };
-
+    /// Records drawing `instances` over `clear` into `target` (a view and
+    /// its size in pixels), for the caller to submit.
+    fn encode(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        (view, (width, height)): (&wgpu::TextureView, (u32, u32)),
+        instances: &[Instance],
+        scale: f32,
+        clear: [f32; 4],
+    ) -> wgpu::CommandBuffer {
         let globals = Globals {
-            viewport: [self.config.width as f32, self.config.height as f32],
+            viewport: [width as f32, height as f32],
             scale,
             linear_output: if self.linear_output { 1.0 } else { 0.0 },
             atlas_size: [ATLAS_SIZE as f32; 2],
             pad: [0.0; 2],
         };
-        self.queue.write_buffer(&self.globals, 0, bytemuck::bytes_of(&globals));
+        queue.write_buffer(&self.globals, 0, bytemuck::bytes_of(&globals));
 
         let bytes = bytemuck::cast_slice::<Instance, u8>(instances);
         if bytes.len() as u64 > self.instances.size() {
-            self.instances = Self::instance_buffer(&self.device, instances.len().next_power_of_two());
+            self.instances = Self::instance_buffer(device, instances.len().next_power_of_two());
         }
         if !bytes.is_empty() {
-            self.queue.write_buffer(&self.instances, 0, bytes);
+            queue.write_buffer(&self.instances, 0, bytes);
         }
 
-        let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("ui") });
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("ui") });
         {
             let [r, g, b, a] = clear.map(f64::from);
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("ui"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
+                    view,
                     depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
@@ -446,9 +467,79 @@ impl Renderer {
                 pass.draw(0..4, 0..instances.len() as u32);
             }
         }
-        self.queue.submit([encoder.finish()]);
-        self.queue.present(frame);
-        Frame::Drawn
+        encoder.finish()
+    }
+}
+
+/// Draws frames into a texture and reads them back: snapshots of the UI
+/// for tests, without a window.
+#[cfg(test)]
+pub struct Offscreen {
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+    draw: Draw,
+}
+
+#[cfg(test)]
+impl Offscreen {
+    /// The format frames are drawn in: sRGB values blended as they are,
+    /// like the window's.
+    const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
+
+    /// A device to draw with; `None` on a machine without a GPU adapter.
+    pub fn new() -> Option<Self> {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
+        let adapter = crate::app::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())).ok()?;
+        let (device, queue) = crate::app::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).ok()?;
+        let draw = Draw::new(&device, Self::FORMAT);
+        Some(Self { device, queue, draw })
+    }
+
+    /// Draws `instances` (with the atlas uploads they need) over `clear`
+    /// into a `width` × `height` frame; returns its RGBA pixels, row by row.
+    pub fn render(
+        &mut self,
+        (width, height): (u32, u32),
+        instances: &[Instance],
+        (glyphs, images): (&mut Vec<Upload>, &mut Vec<Upload>),
+        scale: f32,
+        clear: [f32; 4],
+    ) -> Vec<u8> {
+        self.draw.upload(&self.queue, glyphs, images);
+        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("snapshot"),
+            size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: Self::FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let draw = self.draw.encode(&self.device, &self.queue, (&view, (width, height)), instances, scale, clear);
+        // Rows are copied out padded to the alignment copies need.
+        let row = (width * 4).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
+        let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("snapshot"),
+            size: u64::from(row * height),
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut copy = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("snapshot") });
+        copy.copy_texture_to_buffer(
+            texture.as_image_copy(),
+            wgpu::TexelCopyBufferInfo {
+                buffer: &buffer,
+                layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(row), rows_per_image: None },
+            },
+            wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+        );
+        self.queue.submit([draw, copy.finish()]);
+        buffer.slice(..).map_async(wgpu::MapMode::Read, |_| {});
+        let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
+        let mapped = buffer.slice(..).get_mapped_range().expect("the snapshot buffer was mapped");
+        mapped.chunks(row as usize).flat_map(|line| &line[..(width * 4) as usize]).copied().collect()
     }
 }
 

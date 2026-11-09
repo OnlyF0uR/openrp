@@ -7,9 +7,8 @@ use winit::window::CursorIcon;
 use super::{Chat, Menu, model_name};
 use crate::app::Action;
 use crate::paint::{Painter, Rect, fade, mix};
-use crate::text::Style;
 use crate::theme;
-use crate::ui::{Ui, chevron, id};
+use crate::ui::{Ui, icon, id};
 
 /// Composer grows up to this many lines, then scrolls.
 const MAX_LINES: usize = 8;
@@ -99,9 +98,9 @@ impl Chat {
     ) -> (f32, [Rect; 3]) {
         let t = p.theme;
         let (x, width) = Self::column(main);
-        let pad = 12.0;
+        let pad = 16.0;
         let top_pad = 16.0;
-        let toolbar_h = 46.0;
+        let toolbar_h = 50.0;
         let text_w = width - 2.0 * pad;
 
         // With an input method composing, show its text at the caret.
@@ -119,7 +118,7 @@ impl Chat {
         let visible_h = layout.line_count().min(MAX_LINES) as f32 * line_h;
 
         let card_h = top_pad + visible_h + toolbar_h;
-        let card = Rect::new(x, main.bottom() - 20.0 - card_h, width, card_h);
+        let card = Rect::new(x, main.bottom() - 16.0 - card_h, width, card_h);
         let text_area = Rect::new(card.x + pad, card.y + top_pad, text_w, visible_h);
 
         // Keep the caret inside the visible part of a tall draft.
@@ -158,8 +157,9 @@ impl Chat {
         }
 
         let focus = ui.anim(id("composer-focus"), f32::from(u8::from(ui.focused && self.spotlight.is_none())));
-        p.shadow(Rect::new(card.x, card.y + 4.0, card.w, card.h), t.shadow, theme::RADIUS, 14.0);
-        p.bordered(card, t.surface, theme::RADIUS, 1.0, mix(t.border_strong, t.border_focus, focus));
+        let lift = Rect::new(card.x + 8.0, card.y + 10.0, card.w - 16.0, card.h);
+        p.shadow(lift, fade(t.shadow, 0.8), theme::RADIUS_LG, 28.0);
+        p.bordered(card, t.surface, theme::RADIUS_LG, 1.0, mix(t.border_strong, t.border_focus, focus * 0.6));
 
         let clip = p.push_clip(Rect::new(text_area.x - 2.0, text_area.y, text_area.w + 4.0, text_area.h));
         let selection = self.composer.selection();
@@ -170,7 +170,10 @@ impl Chat {
             }
         }
         if shown.is_empty() {
-            p.label("Message OpenRP, or / for commands…", theme::BODY, origin.0, origin.1, t.text_faint);
+            let invite = if self.current().world.is_some() { "What do you do?" } else { "Message OpenRP" };
+            let width = p.label(invite, theme::BODY, origin.0, origin.1, t.text_faint);
+            let commands = p.layout("/ for commands", theme::BODY, None);
+            p.text(&commands, origin.0 + width + 12.0, origin.1, fade(t.text_faint, 0.55));
         } else {
             p.text(&layout, origin.0, origin.1, t.text);
         }
@@ -190,22 +193,23 @@ impl Chat {
         p.set_clip(clip);
 
         // Toolbar: model and reasoning on the left; send/stop on the right.
-        let item_y = card.bottom() - 10.0 - 26.0;
+        let item_y = card.bottom() - 10.0 - 30.0;
         let name = model_name(&self.models, &self.model).to_owned();
-        let model = self.toolbar_button(p, ui, card.x + 6.0, item_y, &name, Menu::Model);
-        let reasoning = format!("Reasoning: {}", self.reasoning_in_use().label());
-        let reasoning = self.toolbar_button(p, ui, model.right() + 4.0, item_y, &reasoning, Menu::Reasoning);
+        let model = self.toolbar_button(p, ui, (card.x + 8.0, item_y), (None, &name), Menu::Model);
+        let effort = self.reasoning_in_use().label();
+        let reasoning =
+            self.toolbar_button(p, ui, (model.right() + 2.0, item_y), (Some(icon::BRAIN), effort), Menu::Reasoning);
 
         let busy = self.current().busy();
         let ready = !self.composer.text().trim().is_empty();
-        let send = Rect::new(card.right() - 8.0 - 26.0, item_y, 26.0, 26.0);
+        let send = Rect::new(card.right() - 10.0 - 30.0, item_y, 30.0, 30.0);
 
         // Write for me: the AI writes the user's message, from their draft.
         let writing = self.impersonating();
         if writing || self.can_impersonate() {
             let label = if writing { "Writing…" } else { "Write for me" };
             let text = p.layout(label, theme::SMALL, None);
-            let rect = Rect::new(send.x - 8.0 - text.width() - 20.0, item_y, text.width() + 20.0, 26.0);
+            let rect = Rect::new(send.x - 8.0 - text.width() - 42.0, item_y, text.width() + 42.0, 30.0);
             // Only where the toolbar has room for it.
             if rect.x > reasoning.right() + 8.0 {
                 let hovered = ui.hovered(rect);
@@ -217,7 +221,8 @@ impl Chat {
                 } else {
                     mix(t.text_muted, t.text, hover)
                 };
-                p.text(&text, rect.x + 10.0, item_y + (26.0 - text.height()) * 0.5, color);
+                icon::draw(p, icon::WAND, (rect.x + 19.0, item_y + 15.0), 15.0, color);
+                p.text(&text, rect.x + 32.0, item_y + (30.0 - text.height()) * 0.5, color);
                 if hovered {
                     ui.cursor = CursorIcon::Pointer;
                     if ui.clicked(rect) {
@@ -228,15 +233,16 @@ impl Chat {
         }
         let hovered = ui.hovered(send) && (busy || ready);
         let hover = ui.anim(id("send"), f32::from(u8::from(hovered)));
+        let center = (send.x + 15.0, send.y + 15.0);
         if busy {
-            p.rect(send, mix(t.hover, t.active, hover), theme::RADIUS_SM);
-            p.rect(Rect::new(send.x + 9.0, send.y + 9.0, 8.0, 8.0), t.text, 1.5);
+            p.rect(send, mix(t.hover, t.active, hover), 15.0);
+            p.rect(Rect::new(send.x + 10.0, send.y + 10.0, 10.0, 10.0), t.text, 2.5);
         } else if ready {
-            p.rect(send, fade(t.accent, 1.0 - 0.14 * hover), theme::RADIUS_SM);
-            p.label_centered("↑", Style::semibold(15.0), send, t.on_accent);
+            p.rect(send, fade(t.accent, 1.0 - 0.12 * hover), 15.0);
+            icon::draw(p, icon::ARROW_UP, center, 17.0, t.on_accent);
         } else {
-            p.rect(send, t.hover, theme::RADIUS_SM);
-            p.label_centered("↑", Style::semibold(15.0), send, t.text_faint);
+            p.rect(send, t.hover, 15.0);
+            icon::draw(p, icon::ARROW_UP, center, 17.0, t.text_faint);
         }
         if hovered {
             ui.cursor = CursorIcon::Pointer;
@@ -253,18 +259,31 @@ impl Chat {
         (card.y, [model, reasoning, card])
     }
 
-    /// A ghost button with a chevron that toggles `menu`. Returns its rect.
-    fn toolbar_button(&mut self, p: &mut Painter, ui: &mut Ui, x: f32, y: f32, label: &str, menu: Menu) -> Rect {
+    /// A ghost button at `(x, y)`, an optional icon before its label and a
+    /// chevron after, that toggles `menu`. Returns its rect.
+    fn toolbar_button(
+        &mut self,
+        p: &mut Painter,
+        ui: &mut Ui,
+        (x, y): (f32, f32),
+        (glyph, label): (Option<char>, &str),
+        menu: Menu,
+    ) -> Rect {
         let t = p.theme;
         let text = p.layout(label, theme::SMALL, None);
-        let rect = Rect::new(x, y, text.width() + 34.0, 26.0);
+        let lead = if glyph.is_some() { 32.0 } else { 10.0 };
+        let rect = Rect::new(x, y, lead + text.width() + 28.0, 30.0);
         let open = self.menu == Some(menu);
         let hovered = ui.hovered(rect);
         let hover = ui.anim(id(("toolbar", menu == Menu::Model)), f32::from(u8::from(hovered || open)));
         p.rect(rect, fade(t.hover, hover), theme::RADIUS_SM);
         let color = mix(t.text_muted, t.text, hover);
-        p.text(&text, rect.x + 8.0, y + (26.0 - text.height()) * 0.5, color);
-        chevron(p, rect.right() - 17.0, y + 11.0, true, color);
+        let mid = y + 15.0;
+        if let Some(glyph) = glyph {
+            icon::draw(p, glyph, (rect.x + 18.0, mid), 15.0, color);
+        }
+        p.text(&text, rect.x + lead, mid - text.height() * 0.5, color);
+        icon::draw(p, icon::CHEVRON_DOWN, (rect.right() - 15.0, mid), 14.0, fade(color, 0.8));
         if hovered {
             ui.cursor = CursorIcon::Pointer;
             if ui.clicked(rect) {

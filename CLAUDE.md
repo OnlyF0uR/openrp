@@ -18,15 +18,17 @@ cargo fmt --all --check
 - **Code quality:** every public item has doc comments, `clippy::pedantic` stays clean, no `unwrap`s on fallible runtime paths, non-trivial logic gets a small unit test. Parsers survive hostile input (bounded recursion, no slicing off char boundaries).
 - **Secrets:** never log the API key. Config files are written atomically, `0600` on Unix. A saved key is only sent to the address it was saved for.
 - **Safety:** links from replies only open `http(s)` and `mailto`.
-- **Testing:** the owner tests the GUI. Don't drive the app with computer use; `cargo build`, `clippy` and `test` are enough. CI (`.github/workflows/ci.yml`) runs fmt, clippy and the tests on all three platforms for pushes to `main`; a `v*` tag publishes release binaries (packaging files in `packaging/`).
+- **Testing:** the owner tests the GUI. Don't drive the app with computer use; `cargo build`, `clippy` and `test` are enough. To look at a visual change, render the screens offscreen instead: `OPENRP_SNAPSHOTS=<folder> cargo test -p openrp snapshots -- --ignored` saves each scene in `chat/snapshot.rs` as a PNG per scheme (add a scene there for a new surface). CI (`.github/workflows/ci.yml`) runs fmt, clippy and the tests on all three platforms for pushes to `main`; a `v*` tag publishes release binaries (packaging files in `packaging/`).
 
 ## Design
 
-The goal is an app that looks good, is elegant, and feels instant. The current look is not a spec: it is being redesigned, so improve it where it looks flat or dated (depth, motion, colour, type), as long as it stays cheap to draw.
+The goal is an app that looks good, is elegant, and feels instant: modern, quiet and uncluttered, with easy menus. Improve the look where it falls short (depth, motion, colour, type), as long as it stays cheap to draw.
 
-- Colours and sizes live in `theme.rs`. Colours come from the active `Palette` (`p.theme`), never hard-coded, so every scheme (Dark default, Ember, One Dark, Light, Parchment) keeps working.
+- The shell: the sidebar and a docked cast panel sit on the window (`Palette::panel`); the page floats between them on a rounded canvas (`Palette::bg`, `theme::CANVAS_RADIUS`, inset by `theme::GAP`; `chat::canvas` and `chat::frame`, which rounds its corners over whatever was drawn into them). Floating surfaces (menus, dialogs, pickers, Spotlight) use `Palette::surface` with a soft shadow.
+- Colours and sizes live in `theme.rs`. Colours come from the active `Palette` (`p.theme`), never hard-coded, so every scheme (Black default, White, Amber) keeps working. Retired scheme keys map to the nearest one (`Scheme::from_key`).
+- Icons come from the Lucide font (`FontId::ICON`): named in `ui::icon`, drawn with `icon::draw` or `ui::icon_button`. Add a glyph by its codepoint from `lucide-static`'s `font/lucide.css`; the icon test checks every one resolves.
 - The story reads like a book: prose in Literata (`theme::PROSE`). Every character has a colour of their own (`theme::character_color`: the `#rrggbb` picked in `color.rs`, its lightness moved only as far as the scheme needs, `theme::legible`; or, when empty, an OKLCH hue from their name), on their name, portrait ring, bubble and initial.
-- The world's picture washes softly behind the chat header (`Painter::backdrop`). What a live reply adds fades in (`Ui::appear`). Text over pictures sits on `Palette::scrim`.
+- The world's picture washes softly over the top of the story's canvas, fading into it (`Painter::backdrop` under a `Painter::gradient`). Scrolled lists fade out at their edges rather than being cut. What a live reply adds fades in (`Ui::appear`). Text over pictures sits on `Palette::scrim`.
 - Text never assumes a font covers it: layouts go through `Fonts::resolve`, which falls back to Twemoji and the system's CJK fonts.
 - Glyphs and image thumbnails live in two 2048² atlases (`atlas.rs`, least recently drawn shelf evicted). Portraits are drawn with `library::portrait`, over `Painter::image`, which decodes on a worker on first use.
 

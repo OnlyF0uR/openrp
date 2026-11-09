@@ -16,7 +16,7 @@ use crate::library::{Kind, LibraryView, portrait};
 use crate::paint::{Color, Painter, Rect, fade, mix};
 use crate::text::{Align, TextLayout};
 use crate::theme::{self, Palette};
-use crate::ui::{ButtonStyle, Ui, button, chevron, id, keycap, logo};
+use crate::ui::{ButtonStyle, Ui, button, icon, icon_button, id, keycap, logo};
 
 /// Vertical space between messages.
 const MESSAGE_GAP: f32 = 20.0;
@@ -442,7 +442,7 @@ impl Chat {
                 } else {
                     (t.surface, t.border, t.text)
                 };
-                p.bordered(boxed, fill, theme::RADIUS + 2.0, 1.0, border);
+                p.bordered(boxed, fill, theme::RADIUS + 4.0, 1.0, border);
                 let origin = (boxed.x + BOX_PAD.0, boxed.y + BOX_PAD.1);
                 if let Some(doc) = entry.doc.as_mut().filter(|_| !entry.display.is_empty()) {
                     if let Some((a, b)) = sel(1, doc) {
@@ -612,7 +612,7 @@ impl Chat {
                                 doc.height + 2.0 * BOX_PAD.1,
                             );
                             let (fill, border) = bubble_colors(&t, ink);
-                            p.bordered(bubble, fill, theme::RADIUS + 2.0, 1.0, border);
+                            p.bordered(bubble, fill, theme::RADIUS + 4.0, 1.0, border);
                             let origin = (bubble.x + BOX_PAD.0, bubble.y + BOX_PAD.1);
                             (origin, t.text, Rect::new(origin.0, origin.1, bubble.w - 2.0 * BOX_PAD.0, doc.height))
                         }
@@ -664,14 +664,14 @@ impl Chat {
             let is_copied = copied.is_some_and(|(id, code, _)| id == entry.id && code.is_none());
             let has_copy = !entry.display.is_empty();
             if has_copy && ((in_view && ui.hovered(area)) || is_copied) {
-                let label = if is_copied { "✓ Copied" } else { "Copy" };
-                if button(p, ui, Rect::new(area.right() - 72.0, meta_y, 72.0, 24.0), label, ButtonStyle::Ghost, true) {
+                let glyph = if is_copied { icon::CHECK } else { icon::COPY };
+                if icon_button(p, ui, Rect::new(area.right() - 28.0, meta_y, 28.0, 26.0), glyph, true) {
                     effects.copy = Some((entry.id, None, entry.display.clone()));
                 }
             }
             // The turn's actions, left of Copy (which keeps its place).
             if let Some(buttons) = &actions_for {
-                let right = area.right() - if has_copy { 76.0 } else { 0.0 };
+                let right = area.right() - if has_copy { 30.0 } else { 0.0 };
                 effects.turn = effects.turn.take().or(turn_buttons(p, ui, right, meta_y, buttons).map(|c| (c, index)));
             }
         }
@@ -769,6 +769,11 @@ impl Chat {
         }
 
         if max_scroll > 0.0 {
+            // What is further down fades out above the composer.
+            if self.scroll < max_scroll - 0.5 {
+                let edge = Rect::new(view.x, view.bottom() - 24.0, view.w, 24.0);
+                p.gradient(edge, fade(t.bg, 0.0), t.bg, 0.0);
+            }
             let thumb_y = view.y + travel * (self.scroll / max_scroll);
             let active = self.bar_drag.is_some() || ui.hovered(track);
             if self.bar_drag.is_some() {
@@ -836,33 +841,33 @@ fn turn_buttons(p: &mut Painter, ui: &mut Ui, right: f32, y: f32, buttons: &Turn
     let mut right = right;
     let mut clicked = None;
     let row = [
-        (true, TurnClick::Delete, ("Delete", ButtonStyle::Ghost, 64.0)),
-        (buttons.regen, TurnClick::Regen, ("Regenerate", ButtonStyle::Ghost, 92.0)),
-        (buttons.edit, TurnClick::Edit, ("Edit", ButtonStyle::Ghost, 52.0)),
+        (true, TurnClick::Delete, icon::TRASH),
+        (buttons.regen, TurnClick::Regen, icon::REFRESH),
+        (buttons.edit, TurnClick::Edit, icon::PEN),
     ];
-    for (shown, click, (label, style, width)) in row {
+    for (shown, click, glyph) in row {
         if !shown {
             continue;
         }
-        right -= width;
-        if button(p, ui, Rect::new(right, y, width, 24.0), label, style, true) {
+        right -= 28.0;
+        if icon_button(p, ui, Rect::new(right, y, 28.0, 26.0), glyph, true) {
             clicked = Some(click);
         }
-        right -= 4.0;
+        right -= 2.0;
     }
     // ‹ 2/3 › between the replies the last prompt got.
     if let Some((shown, count)) = buttons.swipes {
         let t = p.theme;
         right -= 8.0;
-        let next = Rect::new(right - 24.0, y, 24.0, 24.0);
-        if button(p, ui, next, "›", ButtonStyle::Ghost, shown + 1 < count) {
+        let next = Rect::new(right - 26.0, y, 26.0, 26.0);
+        if icon_button(p, ui, next, icon::CHEVRON_RIGHT, shown + 1 < count) {
             clicked = Some(TurnClick::Swipe(shown + 1));
         }
         let position = p.layout(&format!("{}/{count}", shown + 1), theme::TINY, None);
-        let label_x = next.x - 4.0 - position.width();
-        p.text(&position, label_x, y + (24.0 - position.height()) * 0.5, t.text_faint);
-        let previous = Rect::new(label_x - 28.0, y, 24.0, 24.0);
-        if button(p, ui, previous, "‹", ButtonStyle::Ghost, shown > 0) {
+        let label_x = next.x - 2.0 - position.width();
+        p.text(&position, label_x, y + (26.0 - position.height()) * 0.5, t.text_faint);
+        let previous = Rect::new(label_x - 28.0, y, 26.0, 26.0);
+        if icon_button(p, ui, previous, icon::CHEVRON_LEFT, shown > 0) {
             clicked = Some(TurnClick::Swipe(shown - 1));
         }
     }
@@ -907,7 +912,7 @@ fn speaker(
 
 /// A bubble's fill and border, tinted with its speaker's colour `ink`.
 fn bubble_colors(t: &Palette, ink: Color) -> (Color, Color) {
-    (mix(t.surface, ink, 0.045), mix(t.border, ink, 0.32))
+    (mix(t.surface, ink, 0.05), mix(t.border, ink, 0.18))
 }
 
 /// Height of a story reply's `part`, laid out as `doc`: a note's text, a
@@ -967,8 +972,8 @@ fn toggle_row(p: &mut Painter, ui: &mut Ui, origin: (f32, f32), row: &Toggle<'_>
         mix(t.text_muted, t.text, hover)
     };
     if row.expandable {
-        let (cx, cy) = if row.open { (toggle.x + 8.0, toggle.y + 11.0) } else { (toggle.x + 10.0, toggle.y + 9.5) };
-        chevron(p, cx, cy, row.open, color);
+        let glyph = if row.open { icon::CHEVRON_DOWN } else { icon::CHEVRON_RIGHT };
+        icon::draw(p, glyph, (toggle.x + 12.0, toggle.y + 13.0), 14.0, color);
     } else {
         p.rect(Rect::new(toggle.x + 9.0, toggle.y + 10.0, 6.0, 6.0), color, 3.0);
     }
@@ -1032,7 +1037,7 @@ fn draw_empty(p: &mut Painter, ui: &mut Ui, view: Rect, story: Option<(&str, Opt
         y += 34.0 + 24.0;
     }
 
-    // Keyboard shortcuts, the way Zed's welcome page lists them.
+    // Keyboard shortcuts, listed for whoever is new here.
     let key = |k: &str| format!("{PRIMARY_KEY}+{k}");
     let shortcuts = [
         ("Search everything", key("K")),

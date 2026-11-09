@@ -167,8 +167,11 @@ cargo clippy --workspace --all-targets
   `/clear`, which deletes the open story and starts it over in the same world, cast and note.
 - **Emoji and CJK**: colour emoji (Twemoji), and Chinese, Japanese and Korean text through the
   operating system's fonts, with input-method (IME) support for typing them.
-- **Settings**, in tabs: Appearance (Dark, Ember, One Dark, Light and Parchment schemes,
-  reasoning display),
+- **Looks**: the sidebar and the cast panel sit on the window, the page floats between them on
+  a rounded canvas, and a story's world tints the top of it with its picture. Three schemes:
+  **Black** (the default), **White**, and **Amber**, a warm cream that is light but easy on the
+  eyes, with little blue in it. Icons are Lucide's.
+- **Settings**, in tabs: Appearance (Black, White and Amber schemes, reasoning display),
   Models (a **background model** for memory reviews, summaries and generated characters: a
   cheaper one saves money, and summaries stay on the story's model when it holds less
   context), Usage totals, and Provider (the saved providers, one in use; add, switch to or remove one, or forget the
@@ -205,7 +208,10 @@ cargo clippy --workspace --all-targets
 `crates/desktop/src`:
 
 - `gpu.rs` + `shader.wgsl`: a single instanced pipeline. Rounded rectangles, borders,
-  soft shadows, glyphs and images are all quads, drawn with one draw call per frame.
+  soft shadows, gradients, glyphs and images are all quads, drawn with one draw call per frame.
+  The same pipeline draws offscreen for `chat/snapshot.rs`, which saves screens in every scheme
+  as PNGs to look at the design:
+  `OPENRP_SNAPSHOTS=<folder> cargo test -p openrp snapshots -- --ignored`.
 - `atlas.rs`: shelf packing for the glyph and image atlases, evicting the least recently
   drawn shelf when full.
 - `image.rs`: thumbnails: PNG/JPEG/WebP decoding (with JPEG EXIF orientation) on worker threads,
@@ -314,3 +320,5 @@ The bundled fonts keep their own licenses, below.
   (`assets/JetBrainsMono-LICENSE.txt`).
 - Twemoji Mozilla: code Apache 2.0, graphics © Twitter, Inc. and other contributors, CC-BY 4.0
   (`assets/Twemoji-LICENSE.txt`).
+- Lucide (the icon font, `lucide-static` 1.70.0), © Lucide Icons and Contributors, ISC License
+  (`assets/Lucide-LICENSE.txt`).

@@ -2054,10 +2054,9 @@ pub fn portrait(p: &mut Painter, path: Option<&str>, (name, color): (&str, &str)
 fn header(p: &mut Painter, area: Rect, title: &str, title_x: f32, title_right: f32) {
     let t = p.theme;
     let bar = Rect::new(area.x, area.y, area.w, theme::HEADER_HEIGHT);
-    p.rect(Rect::new(bar.x, bar.bottom() - 1.0, bar.w, 1.0), t.border, 0.0);
-    let mut title = p.layout(title, theme::LABEL, None);
-    title.truncate(p.fonts, (title_right - title_x).max(24.0));
-    p.text(&title, title_x, bar.y + (bar.h - title.height()) * 0.5, t.text);
+    let mut title = p.layout(title, theme::HEADING, None);
+    title.truncate(p.fonts, (title_right - title_x - 4.0).max(24.0));
+    p.text(&title, title_x + 4.0, bar.y + (bar.h - title.height()) * 0.5, t.text);
 }
 
 #[cfg(test)]

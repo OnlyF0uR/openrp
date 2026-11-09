@@ -131,7 +131,7 @@ impl ProviderForm {
         let t = p.theme;
         let rows = self.rows();
         if rows > 0 {
-            p.bordered(Rect::new(x, y, width, rows as f32 * ROW_H), t.panel, theme::RADIUS, 1.0, t.border);
+            p.bordered(Rect::new(x, y, width, rows as f32 * ROW_H), t.bg, theme::RADIUS, 1.0, t.border);
             let active = self.active.as_ref().map(|(url, key)| (url.as_str(), Some(*key)));
             let saved = self.saved.iter().map(|url| (url.as_str(), None));
             let mut forgotten = None;
