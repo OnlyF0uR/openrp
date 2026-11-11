@@ -14,7 +14,7 @@ use winit::window::CursorIcon;
 use crate::app::Action;
 use crate::editor::Editor;
 use crate::library::Record;
-use crate::paint::{Painter, Rect, hexa};
+use crate::paint::{Painter, Rect};
 use crate::text::Style;
 use crate::theme::{self, Scheme};
 use crate::ui::{Ui, edit_key, keycap};
@@ -356,14 +356,14 @@ impl Spotlight {
         self.selected = self.selected.min(rows.len().saturating_sub(1));
 
         // Dim everything beneath.
-        p.rect(view, hexa(0x000000, 0.4), 0.0);
+        p.rect(view, t.scrim, 0.0);
         let width = 620.0f32.min(view.w - 48.0);
         let list_h = (rows.len().max(1) as f32 * ROW_H + group_count(&rows) as f32 * 26.0).min(view.h * 0.6);
         let height = 56.0 + list_h + 38.0;
         let modal =
             Rect::new(view.x + ((view.w - width) * 0.5).round(), view.y + (view.h * 0.14).round(), width, height);
-        p.shadow(Rect::new(modal.x, modal.y + 12.0, modal.w, modal.h), hexa(0x000000, 0.45), theme::RADIUS * 2.0, 40.0);
-        p.bordered(modal, t.surface, theme::RADIUS * 1.5, 1.0, t.border_strong);
+        p.shadow(Rect::new(modal.x, modal.y + 12.0, modal.w, modal.h), t.shadow, theme::RADIUS + 4.0, 40.0);
+        p.bordered(modal, t.surface, theme::RADIUS + 4.0, 1.0, t.border_strong);
 
         // Search field.
         let field = Rect::new(modal.x, modal.y, modal.w, 56.0);

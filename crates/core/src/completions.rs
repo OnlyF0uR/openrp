@@ -75,6 +75,9 @@ fn body(request: &ResponseRequest<'_>) -> Value {
     if let Some(effort) = request.reasoning {
         body["reasoning_effort"] = effort.into();
     }
+    if let Some(temperature) = request.temperature {
+        body["temperature"] = temperature.into();
+    }
     body
 }
 
@@ -206,6 +209,7 @@ mod tests {
             input: &input,
             tools: &tools,
             tool_choice: Some(ToolChoice::Function("speak")),
+            temperature: Some(1.2),
         };
         let body = body(&request);
         let messages = body["messages"].as_array().unwrap();
@@ -218,6 +222,7 @@ mod tests {
         assert_eq!(body["tools"][0]["function"]["name"], "speak");
         assert_eq!(body["tool_choice"], json!({ "type": "function", "function": { "name": "speak" } }));
         assert_eq!(body["reasoning_effort"], "high");
+        assert!((body["temperature"].as_f64().unwrap() - 1.2).abs() < 1e-6);
     }
 
     #[test]

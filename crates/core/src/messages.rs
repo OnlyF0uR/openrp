@@ -294,6 +294,7 @@ mod tests {
             input: &input,
             tools: &tools,
             tool_choice: Some(ToolChoice::Function("speak")),
+            temperature: Some(1.2),
         };
         let body = body(&request);
         let messages = body["messages"].as_array().unwrap();
@@ -311,6 +312,7 @@ mod tests {
         assert_eq!(body["tools"][0]["input_schema"], schema);
         assert_eq!(body["output_config"]["effort"], "high");
         assert_eq!(body["thinking"]["display"], "summarized");
+        assert!(body.get("temperature").is_none(), "current Claude models refuse one");
 
         let plain =
             ResponseRequest { reasoning: Some("none"), tools: &[], tool_choice: Some(ToolChoice::None), ..request };

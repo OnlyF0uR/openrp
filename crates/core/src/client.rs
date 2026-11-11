@@ -79,9 +79,20 @@ pub struct Model {
     /// `medium`, `high`, `xhigh`, `max`); empty when it cannot reason.
     #[serde(default)]
     pub reasoning_levels: Vec<String>,
+    /// Request parameters the model takes, as `OpenRouter` lists them;
+    /// empty when the server does not say.
+    #[serde(default)]
+    pub supported_parameters: Vec<String>,
 }
 
 impl Model {
+    /// Whether the model may be sent a sampling temperature: unless its
+    /// server lists what it takes and leaves temperature out.
+    #[must_use]
+    pub fn takes_temperature(&self) -> bool {
+        self.supported_parameters.is_empty() || self.supported_parameters.iter().any(|p| p == "temperature")
+    }
+
     /// Cost in USD of a response with the given token counts, pricing cached
     /// prompt tokens the way the server bills them.
     #[must_use]

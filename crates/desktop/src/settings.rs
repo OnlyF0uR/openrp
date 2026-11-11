@@ -1,24 +1,25 @@
-//! Settings page: appearance, chat, models, usage, provider and data.
+//! The settings, a modal with a page per section down its left:
+//! appearance, models, usage, and the provider and data.
 
 use arboard::Clipboard;
 use winit::event::KeyEvent;
 use winit::keyboard::ModifiersState;
+use winit::window::CursorIcon;
 
 use crate::app::Action;
 use crate::chat::{ReasoningView, format_cost, group_digits};
 use crate::paint::{Painter, Rect, fade, mix};
 use crate::provider::ProviderForm;
-use crate::text::{Align, Style};
+use crate::text::Style;
 use crate::theme::{self, Palette, Scheme};
-use crate::ui::chevron;
-use crate::ui::{ButtonStyle, Ui, button, id, keycap};
+use crate::ui::{ButtonStyle, Scroll, Ui, button, chevron, icon, icon_button, id, modal, row, segmented};
 
-/// Widest the settings column gets.
-const CONTENT_WIDTH: f32 = 680.0;
-/// Space between sections.
-const SECTION_GAP: f32 = 40.0;
-/// Height of a row inside a settings group.
-const ROW_H: f32 = 68.0;
+/// The modal's size, where the window has it to give.
+const SIZE: (f32, f32) = (940.0, 660.0);
+/// Width of the list of pages at its left.
+const NAV: f32 = 196.0;
+/// Height of a settings row.
+const ROW_H: f32 = 58.0;
 
 /// Usage summed over every saved session.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -31,7 +32,7 @@ pub struct Totals {
     pub sessions: usize,
 }
 
-/// The settings tabs, in header order.
+/// The settings pages, in list order.
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 enum Tab {
     #[default]
@@ -44,12 +45,13 @@ enum Tab {
 impl Tab {
     const ALL: [Self; 4] = [Self::Appearance, Self::Models, Self::Usage, Self::Provider];
 
-    fn label(self) -> &'static str {
+    /// Its name, its icon, and what the page is for.
+    fn label(self) -> (&'static str, char, &'static str) {
         match self {
-            Self::Appearance => "Appearance",
-            Self::Models => "Models",
-            Self::Usage => "Usage",
-            Self::Provider => "Provider",
+            Self::Appearance => ("Appearance", icon::PALETTE, "How OpenRP looks, and how replies are shown."),
+            Self::Models => ("Models", icon::SPARKLES, "The story's model is picked under the message box."),
+            Self::Usage => ("Usage", icon::CHART, "Totals across every story saved on this device."),
+            Self::Provider => ("Provider", icon::PLUG, "Where replies come from. Your stories stay on this device."),
         }
     }
 }
@@ -65,19 +67,17 @@ pub struct Provider {
     pub saved: Vec<String>,
 }
 
-/// Open tab and scroll state of the settings page.
+/// Open page and scroll state of the settings.
 pub struct SettingsView {
     tab: Tab,
-    scroll: f32,
-    /// Content height measured last frame, for clamping the scroll.
-    content_h: f32,
+    scroll: Scroll,
     /// The providers saved, and a new one being entered.
     form: ProviderForm,
 }
 
 impl Default for SettingsView {
     fn default() -> Self {
-        Self { tab: Tab::default(), scroll: 0.0, content_h: 0.0, form: ProviderForm::new("", None, Vec::new()) }
+        Self { tab: Tab::default(), scroll: Scroll::default(), form: ProviderForm::new("", None, Vec::new()) }
     }
 }
 
@@ -121,89 +121,102 @@ impl SettingsView {
         }
     }
 
-    /// Draws the page into `area` (the whole main area, header included).
-    /// `utility` names the background model. Returns where its button is
-    /// when it was clicked, to open the model menu there.
+    /// Draws the settings over `view`. `utility` names the background
+    /// model. Returns where that model's button is when it was clicked, to
+    /// open the model menu there, and whether the settings were left (the
+    /// close button, or a click outside them).
     #[allow(clippy::too_many_arguments, reason = "one argument per setting shown; a struct would only rename them")]
     pub fn draw(
         &mut self,
         p: &mut Painter,
         ui: &mut Ui,
-        area: Rect,
+        view: Rect,
         scheme: Scheme,
         reasoning: ReasoningView,
         utility: &str,
         totals: Totals,
         actions: &mut Vec<Action>,
-    ) -> Option<Rect> {
+    ) -> (Option<Rect>, bool) {
         let t = p.theme;
-        let bar = Rect::new(area.x, area.y, area.w, theme::HEADER_HEIGHT);
-        let title = p.layout("Settings", theme::HEADING, None);
-        p.text(&title, bar.x + 20.0, bar.y + (bar.h - title.height()) * 0.5, t.text);
-        let close = p.layout("to close", theme::TINY, None);
-        let close_x = bar.right() - 16.0 - close.width();
-        p.text(&close, close_x, bar.y + (bar.h - close.height()) * 0.5, t.text_faint);
-        keycap(p, "Esc", close_x - 6.0, bar.y + (bar.h - 20.0) * 0.5);
-        if let Some(tab) = tabs(p, ui, bar.x + 20.0 + title.width() + 24.0, bar, self.tab) {
-            self.tab = tab;
-            self.scroll = 0.0;
-        }
+        let (card, outside) = modal(p, ui, view, SIZE, "settings");
+        let mut leave = outside;
 
-        let body = Rect::new(area.x, bar.bottom(), area.w, area.h - bar.h);
-        if ui.hovered(body) {
-            self.scroll += ui.scroll;
+        // The pages, down the left.
+        p.label("Settings", theme::HEADING, card.x + 24.0, card.y + 20.0, t.text);
+        let mut y = card.y + 62.0;
+        for tab in Tab::ALL {
+            let (label, glyph, _) = tab.label();
+            let item = Rect::new(card.x + 12.0, y, NAV - 24.0, 34.0);
+            let hovered = ui.hovered(item);
+            let hover = ui.anim(id(("settings-tab", label)), f32::from(u8::from(hovered)));
+            let selected = self.tab == tab;
+            p.rect(item, if selected { t.active } else { fade(t.hover, hover) }, theme::RADIUS_SM);
+            let ink = mix(t.text_muted, t.text, if selected { 1.0 } else { hover });
+            icon::draw(p, glyph, (item.x + 18.0, item.y + 17.0), 15.0, ink);
+            p.label(label, theme::SMALL, item.x + 34.0, item.y + 7.0, ink);
+            if hovered {
+                ui.cursor = CursorIcon::Pointer;
+                if ui.clicked(item) && !selected {
+                    self.tab = tab;
+                    self.scroll.reset();
+                }
+            }
+            y += 38.0;
         }
-        self.scroll = self.scroll.clamp(0.0, (self.content_h - body.h).max(0.0));
-        let width = CONTENT_WIDTH.min(body.w - 64.0);
-        let x = body.x + ((body.w - width) * 0.5).round();
+        let version = concat!("OpenRP ", env!("CARGO_PKG_VERSION"));
+        p.label(version, theme::TINY, card.x + 24.0, card.bottom() - 36.0, t.text_faint);
+        p.rect(Rect::new(card.x + NAV, card.y + 1.0, 1.0, card.h - 2.0), t.border, 0.0);
 
-        // Content scrolled under the header must not react to the mouse.
-        ui.blocker = Some(bar);
-        let clip = p.push_clip(body);
-        let top = body.y + 32.0 - self.scroll.round();
-        let mut y = top;
+        // The page, scrolling beside them.
+        let area = Rect::new(card.x + NAV + 1.0, card.y + 1.0, card.w - NAV - 2.0, card.h - 2.0);
+        let (x, width) = (area.x + 32.0, area.w - 64.0);
+        let offset = self.scroll.update(ui, ui.hovered(area));
+        let clip = p.push_clip(area);
+        let (name, _, about) = self.tab.label();
+        p.label(name, theme::TITLE, x, area.y + 22.0 - offset, t.text);
+        let about = p.layout(about, theme::SMALL, Some(width - 40.0));
+        p.text(&about, x, area.y + 58.0 - offset, t.text_muted);
+        let mut y = area.y + 58.0 - offset + about.height() + 26.0;
+        let mut pick_utility = None;
         // Theme cards and usage stats share a three-column grid.
         let card_w = ((width - 24.0) / 3.0).floor();
-        let mut pick_utility = None;
 
         match self.tab {
             Tab::Appearance => {
-                y = section(p, x, y, "Colour scheme", "It applies instantly.");
+                y = heading(p, x, y, "Theme");
                 let preview_h = (card_w * 0.58).round();
-                let card_h = preview_h + 52.0;
+                let card_h = preview_h + 46.0;
                 for (i, choice) in Scheme::ALL.into_iter().enumerate() {
-                    let (column, row) = ((i % 3) as f32, (i / 3) as f32);
-                    let card = Rect::new(x + column * (card_w + 12.0), y + row * (card_h + 12.0), card_w, card_h);
-                    if theme_card(p, ui, card, preview_h, choice, choice == scheme) && choice != scheme {
+                    let tile = Rect::new(x + i as f32 * (card_w + 12.0), y, card_w, card_h);
+                    if theme_card(p, ui, tile, preview_h, choice, choice == scheme) && choice != scheme {
                         actions.push(Action::SetTheme(choice));
                     }
                 }
-                let rows = Scheme::ALL.len().div_ceil(3) as f32;
-                y += rows * (card_h + 12.0) - 12.0 + SECTION_GAP;
+                y += card_h + 34.0;
 
-                y = section(p, x, y, "Chat", "How replies from thinking models look.");
-                let row = group(p, x, y, width);
-                setting_row(p, row, "Model reasoning", "Show what the model considered before answering.");
+                y = heading(p, x, y, "Replies");
+                let line = Rect::new(x, y, width, ROW_H);
+                row(p, line, icon::BRAIN, "Model reasoning", "What the model considered before answering.", 290.0);
                 let labels = ReasoningView::ALL.map(ReasoningView::label);
                 let selected = ReasoningView::ALL.iter().position(|v| *v == reasoning).unwrap_or(0);
-                if let Some(choice) = segmented(p, ui, control(row, 264.0), &labels, selected) {
+                if let Some(choice) = segmented(p, ui, control(line, 264.0), &labels, selected) {
                     actions.push(Action::SetReasoningView(ReasoningView::ALL[choice]));
                 }
                 y += ROW_H;
             }
             Tab::Models => {
-                y = section(p, x, y, "Models", "The story's model is picked under the message box.");
-                let row = group(p, x, y, width);
-                setting_row(p, row, "Background model", "Writes memory reviews, summaries and generated characters.");
-                let picker = control(row, 220.0);
+                let line = Rect::new(x, y, width, ROW_H);
+                let detail = "Writes memory reviews, summaries and generated characters.";
+                row(p, line, icon::SPARKLES, "Background model", detail, 246.0);
+                let picker = control(line, 220.0);
                 if dropdown(p, ui, picker, utility) {
                     pick_utility = Some(picker);
                 }
-                y += ROW_H + 12.0;
+                y += ROW_H + 14.0;
                 let tip = p.layout(
                     "A cheaper model here saves money: it never writes the story itself. Summaries use the story's model when this \
                      one holds less context.",
-                    theme::SMALL,
+                    theme::TINY,
                     Some(width),
                 );
                 p.text(&tip, x, y, t.text_faint);
@@ -212,11 +225,10 @@ impl SettingsView {
             Tab::Usage => {
                 // Providers rarely list prices: costs show only once something cost money.
                 let unpriced = totals.cost <= 0.0;
-                y = section(p, x, y, "Usage", "Totals across every session saved on this device.");
                 let stats = [
                     ("Total spent", format_cost(totals.cost)),
                     ("Tokens", group_digits(totals.tokens)),
-                    ("Sessions", group_digits(totals.sessions as u64)),
+                    ("Stories", group_digits(totals.sessions as u64)),
                 ];
                 for (i, (label, value)) in stats.iter().skip(usize::from(unpriced)).enumerate() {
                     let stat = Rect::new(x + i as f32 * (card_w + 12.0), y, card_w, 84.0);
@@ -227,36 +239,36 @@ impl SettingsView {
                 y += 84.0;
             }
             Tab::Provider => {
-                y = section(p, x, y, "Provider", "Where replies come from. Your stories stay on this device.");
                 let inner = width - 32.0;
                 let form_h = self.form.height(p, inner);
-                let card = Rect::new(x, y, width, 16.0 + form_h + 20.0 + 30.0 + 16.0);
-                p.bordered(card, t.surface, theme::RADIUS, 1.0, t.border);
-                self.form.draw(p, ui, card.x + 16.0, card.y + 16.0, inner, actions);
-                let connect = Rect::new(card.right() - 16.0 - 120.0, card.y + 16.0 + form_h + 20.0, 120.0, 30.0);
+                let form = Rect::new(x, y, width, 16.0 + form_h + 20.0 + 30.0 + 16.0);
+                p.bordered(form, t.surface, theme::RADIUS, 1.0, t.border);
+                self.form.draw(p, ui, form.x + 16.0, form.y + 16.0, inner, actions);
+                let connect = Rect::new(form.right() - 16.0 - 120.0, form.y + 16.0 + form_h + 20.0, 120.0, 30.0);
                 if button(p, ui, connect, "Connect", ButtonStyle::Primary, true) {
                     self.connect(actions);
                 }
-                y += card.h + SECTION_GAP;
+                y += form.h + 34.0;
 
-                y = section(p, x, y, "Data", "Your sessions never leave this device except to reach the model.");
-                let row = group(p, x, y, width);
-                setting_row(p, row, "Saved sessions", "Stored as JSON files in ~/.openrp/sessions");
-                if button(p, ui, control(row, 116.0), "Open folder", ButtonStyle::Secondary, true) {
+                y = heading(p, x, y, "On this computer");
+                let line = Rect::new(x, y, width, ROW_H);
+                row(p, line, icon::FOLDER, "Your data", "Stories, worlds and characters are files in ~/.openrp", 142.0);
+                if button(p, ui, control(line, 116.0), "Open folder", ButtonStyle::Secondary, true) {
                     actions.push(Action::OpenDataDir);
                 }
-                y += ROW_H + 32.0;
-
-                let footer = p.layout(concat!("OpenRP ", env!("CARGO_PKG_VERSION")), theme::TINY, None);
-                p.text_aligned(&footer, x, y, Align::Center, width, t.text_faint);
-                y += footer.height();
+                y += ROW_H;
             }
         }
-
         p.set_clip(clip);
-        ui.blocker = None;
-        self.content_h = y - top + 64.0;
-        pick_utility
+        let content = y + offset - area.y + 24.0;
+        self.scroll.finish(ui, content, area.h);
+        self.scroll.bar(p, area, content);
+
+        // Over the page, so what scrolls under it cannot take its click.
+        if icon_button(p, ui, Rect::new(card.right() - 44.0, card.y + 14.0, 30.0, 30.0), icon::X, true) {
+            leave = true;
+        }
+        (pick_utility, leave)
     }
 }
 
@@ -272,91 +284,20 @@ fn dropdown(p: &mut Painter, ui: &mut Ui, rect: Rect, label: &str) -> bool {
     p.text(&text, rect.x + 12.0, rect.y + (rect.h - text.height()) * 0.5, t.text);
     chevron(p, rect.right() - 20.0, rect.y + rect.h * 0.5 - 2.0, true, t.text_muted);
     if hovered {
-        ui.cursor = winit::window::CursorIcon::Pointer;
+        ui.cursor = CursorIcon::Pointer;
     }
     ui.clicked(rect)
 }
 
-/// The tabs in the header, as pills starting at `x`; the open one filled.
-/// Returns a newly clicked tab.
-fn tabs(p: &mut Painter, ui: &mut Ui, mut x: f32, bar: Rect, open: Tab) -> Option<Tab> {
-    let t = p.theme;
-    let mut clicked = None;
-    for tab in Tab::ALL {
-        let label = p.layout(tab.label(), theme::LABEL, None);
-        let pill = Rect::new(x, bar.y + (bar.h - 30.0) * 0.5, label.width() + 28.0, 30.0);
-        let hovered = tab != open && ui.hovered(pill);
-        let hover = ui.anim(id(("settings-tab", tab.label())), f32::from(u8::from(hovered)));
-        let fill = if tab == open { t.active } else { fade(t.hover, hover) };
-        p.rect(pill, fill, 15.0);
-        let color = if tab == open { t.text } else { mix(t.text_muted, t.text, hover) };
-        p.text(&label, pill.x + 14.0, pill.y + (pill.h - label.height()) * 0.5, color);
-        if hovered {
-            ui.cursor = winit::window::CursorIcon::Pointer;
-            if ui.clicked(pill) {
-                clicked = Some(tab);
-            }
-        }
-        x += pill.w + 4.0;
-    }
-    clicked
-}
-
-/// Section heading with a description; returns where its content starts.
-fn section(p: &mut Painter, x: f32, y: f32, title: &str, description: &str) -> f32 {
-    let t = p.theme;
-    p.label(title, Style::semibold(15.0), x, y, t.text);
-    p.label(description, theme::SMALL, x, y + 24.0, t.text_muted);
-    y + 58.0
-}
-
-/// A bordered group holding one row; returns the row's rect.
-fn group(p: &mut Painter, x: f32, y: f32, width: f32) -> Rect {
-    let t = p.theme;
-    let rect = Rect::new(x, y, width, ROW_H);
-    p.bordered(rect, t.surface, theme::RADIUS, 1.0, t.border);
-    rect
-}
-
-/// Title and description on the left of a settings row.
-fn setting_row(p: &mut Painter, row: Rect, title: &str, description: &str) {
-    let t = p.theme;
-    p.label(title, theme::LABEL, row.x + 16.0, row.y + 15.0, t.text);
-    p.label(description, theme::SMALL, row.x + 16.0, row.y + 36.0, t.text_muted);
+/// A heading over a group of rows; returns where they start.
+fn heading(p: &mut Painter, x: f32, y: f32, title: &str) -> f32 {
+    p.label(title, theme::LABEL, x, y, p.theme.text);
+    y + 30.0
 }
 
 /// A control of `width` right-aligned in `row`.
 fn control(row: Rect, width: f32) -> Rect {
-    Rect::new(row.right() - 16.0 - width, row.y + (row.h - 30.0) * 0.5, width, 30.0)
-}
-
-/// Equal-width options in one outlined control, the selected one filled.
-/// Returns a newly clicked option.
-fn segmented(p: &mut Painter, ui: &mut Ui, rect: Rect, labels: &[&str], selected: usize) -> Option<usize> {
-    let t = p.theme;
-    p.bordered(rect, t.surface, theme::RADIUS_SM, 1.0, t.border_strong);
-    let w = rect.w / labels.len() as f32;
-    let mut clicked = None;
-    for (i, label) in labels.iter().enumerate() {
-        let cell = Rect::new((rect.x + i as f32 * w).round(), rect.y, w.round(), rect.h);
-        let inner = Rect::new(cell.x + 3.0, cell.y + 3.0, cell.w - 6.0, cell.h - 6.0);
-        let hovered = ui.hovered(cell) && i != selected;
-        let hover = ui.anim(id(("segment", label, rect.y.to_bits())), f32::from(u8::from(hovered)));
-        if i == selected {
-            p.rect(inner, t.active, theme::RADIUS_SM - 1.0);
-        } else {
-            p.rect(inner, fade(t.hover, hover), theme::RADIUS_SM - 1.0);
-        }
-        let color = if i == selected { t.text } else { mix(t.text_muted, t.text, hover) };
-        p.label_centered(label, theme::LABEL, cell, color);
-        if hovered {
-            ui.cursor = winit::window::CursorIcon::Pointer;
-            if ui.clicked(cell) {
-                clicked = Some(i);
-            }
-        }
-    }
-    clicked
+    Rect::new(row.right() - 12.0 - width, row.y + (row.h - 32.0) * 0.5, width, 32.0)
 }
 
 /// A selectable card previewing `scheme`. Returns whether it was clicked.
@@ -368,18 +309,16 @@ fn theme_card(p: &mut Painter, ui: &mut Ui, card: Rect, preview_h: f32, scheme: 
     p.bordered(card, t.surface, theme::RADIUS + 2.0, if selected { 2.0 } else { 1.0 }, border);
     preview(p, Rect::new(card.x + 8.0, card.y + 8.0, card.w - 16.0, preview_h), scheme.palette());
 
-    // Radio button and name.
-    let label_y = card.y + preview_h + 16.0;
-    let radio = Rect::new(card.x + 12.0, label_y + 7.0, 14.0, 14.0);
-    p.bordered(radio, [0.0; 4], 7.0, 1.5, if selected { t.accent } else { t.border_strong });
-    if selected {
-        p.rect(Rect::new(radio.x + 4.0, radio.y + 4.0, 6.0, 6.0), t.accent, 3.0);
-    }
+    // Its name, ticked when it is the one in use.
+    let label = Rect::new(card.x + 14.0, card.y + preview_h + 8.0, card.w - 28.0, 38.0);
     let name = p.layout(scheme.label(), theme::LABEL, None);
-    p.text(&name, card.x + 34.0, label_y + (28.0 - name.height()) * 0.5, t.text);
+    p.text(&name, label.x, label.y + (label.h - name.height()) * 0.5, t.text);
+    if selected {
+        icon::draw(p, icon::CHECK, (label.right() - 7.0, label.y + label.h * 0.5), 15.0, t.text);
+    }
 
     if hovered {
-        ui.cursor = winit::window::CursorIcon::Pointer;
+        ui.cursor = CursorIcon::Pointer;
     }
     ui.clicked(card)
 }

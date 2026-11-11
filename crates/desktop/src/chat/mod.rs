@@ -1,5 +1,5 @@
 //! Main screen: sidebar of saved sessions, messages, composer, menus,
-//! Spotlight, the settings page and the worlds and characters pages.
+//! Spotlight, the settings (a modal) and the worlds and characters pages.
 //!
 //! A session is a story played in a world: Play on a world starts one, and
 //! its cast (characters present or absent) lives in `cast.rs`.
@@ -30,7 +30,7 @@ use std::sync::atomic::Ordering;
 
 use arboard::Clipboard;
 use openrp_core::{
-    CastMember, Error, Model, Player, Role, Session, SessionSummary, StoredMessage, Usage, new_id, unix_now,
+    CastMember, Direction, Error, Model, Player, Role, Session, SessionSummary, StoredMessage, Usage, new_id, unix_now,
 };
 use winit::event::KeyEvent;
 use winit::keyboard::{Key, ModifiersState, NamedKey};
@@ -194,7 +194,6 @@ impl ReasoningView {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Page {
     Chat,
-    Settings,
     /// The worlds or characters page.
     Library(Kind),
 }
@@ -379,8 +378,10 @@ struct Conversation {
     /// Facts the story must not forget, kept by the model's remember tool
     /// and editable by the user.
     memories: Vec<String>,
-    /// The user's author's note: guidance for the whole story.
+    /// The user's note: guidance for the whole story.
     note: String,
+    /// How boldly and at what length the story is told.
+    direction: Direction,
     /// How many prompts (and their replies) the memory reviews have read.
     reviewed: usize,
     /// The memory review being waited for.
@@ -418,6 +419,7 @@ impl Conversation {
             scene: String::new(),
             memories: Vec::new(),
             note: String::new(),
+            direction: Direction::default(),
             reviewed: 0,
             reviewing: None,
             auto_rounds: 0,
@@ -468,6 +470,7 @@ impl Conversation {
             scene: self.scene.clone(),
             memories: self.memories.clone(),
             note: self.note.clone(),
+            direction: self.direction,
             reviewed: self.reviewed,
             messages: self
                 .entries
@@ -570,6 +573,8 @@ pub struct Chat {
     current: u64,
     next_id: u64,
     page: Page,
+    /// The settings are open, over whatever page is showing.
+    settings_open: bool,
     settings: SettingsView,
     composer: Editor,
     /// Composer layout and text origin from the last frame, for keyboard
@@ -616,7 +621,7 @@ pub struct Chat {
     selection: Option<(SelPos, SelPos)>,
     /// Dragging a message selection.
     dragging: bool,
-    sidebar_scroll: f32,
+    sidebar_scroll: crate::ui::Scroll,
     /// What was just copied (entry, code block or whole message) and when.
     copied: Option<(u64, Option<usize>, f32)>,
     spotlight: Option<Spotlight>,
@@ -667,6 +672,7 @@ impl Chat {
             current: 0,
             next_id: 1,
             page: Page::Chat,
+            settings_open: false,
             settings: SettingsView::default(),
             composer: Editor::default(),
             composer_layout: None,
@@ -695,7 +701,7 @@ impl Chat {
             bar_drag: None,
             selection: None,
             dragging: false,
-            sidebar_scroll: 0.0,
+            sidebar_scroll: crate::ui::Scroll::default(),
             copied: None,
             library: LibraryView::default(),
             character_form: None,
@@ -922,7 +928,7 @@ impl Chat {
             Command::Clear => self.clear(actions),
             // The instruction is typed after it, then sent with the message.
             Command::Ooc => self.composer.insert("/ooc "),
-            Command::Note => self.edit_note(),
+            Command::Note => self.edit_direction(),
             Command::Memory => self.edit_memories(),
             Command::Memorize => self.review_memories(current, true, actions),
             Command::Duplicate => self.duplicate(current, false, actions),
@@ -933,8 +939,8 @@ impl Chat {
 
     /// Copies conversation `id` into a new story and opens it: exactly,
     /// every message, memory and the scene included (its replies are not
-    /// billed again), or as a `frame`: the world, player, cast and author's
-    /// note, but nothing that happened. A session not read yet is read
+    /// billed again), or as a `frame`: the world, player, cast and the user's
+    /// direction, but nothing that happened. A session not read yet is read
     /// first, and copied once it is.
     pub(super) fn duplicate(&mut self, id: u64, frame: bool, actions: &mut Vec<Action>) {
         let Some(source) = self.read_first(id, Pending::Duplicate(frame), actions) else { return };
@@ -1004,7 +1010,7 @@ impl Chat {
     }
 
     /// Deletes the open story (stopping its reply) and starts it over in
-    /// the same world, with the same cast, player and author's note.
+    /// the same world, with the same cast, player and direction.
     fn clear(&mut self, actions: &mut Vec<Action>) {
         let conversation = self.current();
         if conversation.entries.is_empty() || conversation.load != Load::Loaded {
@@ -1012,13 +1018,13 @@ impl Chat {
         }
         let (id, world, cast, player) =
             (conversation.id, conversation.world.clone(), conversation.cast.clone(), conversation.player.clone());
-        let note = conversation.note.clone();
+        let (note, direction) = (conversation.note.clone(), conversation.direction);
         self.delete_conversation(id, actions);
         let fresh = self.current();
         fresh.world = world;
         fresh.cast = cast;
         fresh.player = player;
-        fresh.note = note;
+        (fresh.note, fresh.direction) = (note, direction);
         // The story begins again at once, so it is saved and listed again.
         if !fresh.is_fresh() {
             actions.push(Action::SaveSession(fresh.to_session()));
@@ -1063,6 +1069,7 @@ impl Chat {
         conversation.scene = session.scene;
         conversation.memories = session.memories;
         conversation.note = session.note;
+        conversation.direction = session.direction;
         conversation.reviewed = session.reviewed;
         conversation.load = Load::Loaded;
         match self.pending.take_if(|(id, _)| *id == conversation_id) {
@@ -1162,13 +1169,15 @@ impl Chat {
         self.request_reply(id, actions);
     }
 
+    /// Opens the settings over the page, or closes them.
     fn toggle_settings(&mut self) {
-        self.show(if self.page == Page::Settings { Page::Chat } else { Page::Settings });
+        self.menu = None;
+        self.settings_open = !self.settings_open;
     }
 
     /// Switches the main area to `page`.
     fn show(&mut self, page: Page) {
-        self.menu = None;
+        (self.menu, self.settings_open) = (None, false);
         if let Page::Library(kind) = page {
             self.library.show(kind);
         }
@@ -1272,6 +1281,9 @@ impl Chat {
             (self.menu_pick, self.menu_keyed, self.menu_scroll) = (0, true, 0.0);
             return;
         }
+        if self.settings_open {
+            return self.settings.insert(text);
+        }
         match self.page {
             Page::Chat => {
                 if let Some(form) = self.character_form() {
@@ -1283,7 +1295,6 @@ impl Chat {
                 }
             }
             Page::Library(_) => self.library.insert(text),
-            Page::Settings => self.settings.insert(text),
         }
     }
 
@@ -1299,9 +1310,11 @@ impl Chat {
         if let Some(area) = self.menu_rect.filter(|_| self.menu.is_some_and(Menu::searchable)) {
             return Some(Rect::new(area.x + 12.0, area.y + 8.0, 2.0, 22.0));
         }
+        if self.settings_open {
+            return self.settings.caret();
+        }
         match self.page {
             Page::Library(_) => self.library.caret(),
-            Page::Settings => self.settings.caret(),
             Page::Chat => match (&self.character_form, &self.turn_edit) {
                 (Some(form), _) if form.conversation == self.current => form.fields.caret(),
                 (_, Some(edit)) if edit.conversation == self.current => edit.fields.caret(),
@@ -1327,7 +1340,7 @@ impl Chat {
     fn apply_pick(&mut self, pick: Pick, actions: &mut Vec<Action>) {
         self.spotlight = None;
         match pick {
-            Pick::Settings => self.show(Page::Settings),
+            Pick::Settings => (self.menu, self.settings_open) = (None, true),
             Pick::Worlds => self.show(Page::Library(Kind::World)),
             Pick::Characters => self.show(Page::Library(Kind::Character)),
             Pick::Personas => self.show(Page::Library(Kind::Persona)),
@@ -1391,12 +1404,12 @@ impl Chat {
         let commands = self.commands();
         match &event.logical_key {
             Key::Named(NamedKey::Escape) if self.menu.is_some() => self.close_menu(),
-            Key::Named(NamedKey::Escape) if self.page == Page::Settings => self.page = Page::Chat,
+            Key::Named(NamedKey::Escape) if self.settings_open => self.settings_open = false,
             Key::Character(c) if primary && is(c, "k") => self.open_spotlight(),
             Key::Character(c) if primary && is(c, ",") => self.toggle_settings(),
             // A story starts from a world.
             Key::Character(c) if primary && is(c, "n") => self.show(Page::Library(Kind::World)),
-            _ if self.page == Page::Settings => self.settings.key(event, mods, cb, actions),
+            _ if self.settings_open => self.settings.key(event, mods, cb, actions),
             _ if matches!(self.page, Page::Library(_)) => {
                 if !self.library.key(event, mods, cb, actions) && event.logical_key == Key::Named(NamedKey::Escape) {
                     self.page = Page::Chat;
@@ -1463,20 +1476,34 @@ impl Chat {
         let area = Rect::new(sidebar.w, top, view.w - sidebar.w, view.h - top);
         let docked = match self.page {
             Page::Chat => self.cast_panel(area).filter(|(_, docked)| *docked).map(|(rect, _)| rect),
-            _ => None,
+            Page::Library(_) => None,
         };
         let main = canvas(area, docked);
         // A title being typed is kept once its story is left.
-        if self.title_edit.as_ref().is_some_and(|(id, _)| *id != self.current || self.page != Page::Chat) {
+        let leaves = |id: u64| id != self.current || self.page != Page::Chat || self.settings_open;
+        if self.title_edit.as_ref().is_some_and(|(id, _)| leaves(*id)) {
             self.commit_title(actions);
         }
         p.rect(view, p.theme.panel, 0.0);
+        // The brand, where a title would be: on macOS the traffic lights sit there.
+        if crate::titlebar::CUSTOM {
+            let mid = (top * 0.5).round() + 1.0;
+            crate::ui::logo(p, Rect::new(theme::GAP + 6.0, mid - 9.0, 18.0, 18.0));
+            p.label("OpenRP", theme::LABEL, theme::GAP + 32.0, mid - 9.0, p.theme.text_muted);
+        }
+        // The canvas, lifted a little off the window.
+        let lifted = Rect::new(main.x, main.y + 2.0, main.w, main.h);
+        p.shadow(lifted, fade(p.theme.shadow, 0.35), theme::CANVAS_RADIUS, 18.0);
         p.bordered(main, p.theme.bg, theme::CANVAS_RADIUS, 1.0, p.theme.border);
 
-        // Overlays are drawn last, on top. Spotlight blocks everything
-        // beneath it; an open menu blocks its own area (rect from last frame).
+        // Overlays are drawn last, on top. Spotlight and the settings block
+        // everything beneath them; an open menu blocks its own area (rect
+        // from last frame).
         self.sync_command_menu();
-        let modal = self.spotlight.is_some();
+        let spotlight = self.spotlight.is_some();
+        // Settings opened by this frame's click must not take that click for one outside them.
+        let settings_were_open = self.settings_open;
+        let modal = spotlight || self.settings_open;
         ui.blocker = if modal {
             Some(view)
         } else if self.menu.is_some() {
@@ -1486,22 +1513,6 @@ impl Chat {
         };
         self.draw_sidebar(p, ui, sidebar, actions);
         let toolbar = match self.page {
-            Page::Settings => {
-                let totals = self.totals();
-                let utility = self
-                    .utility_model
-                    .as_deref()
-                    .map_or("Same as the story", |id| model_name(&self.models, id))
-                    .to_owned();
-                if let Some(anchor) =
-                    self.settings.draw(p, ui, main, scheme, self.reasoning_view, &utility, totals, actions)
-                {
-                    self.menu = if self.menu == Some(Menu::UtilityModel) { None } else { Some(Menu::UtilityModel) };
-                    self.menu_scroll = 0.0;
-                    self.utility_anchor = anchor;
-                }
-                [Rect::default(); 4]
-            }
             Page::Library(kind) => {
                 let stories = self.world_stories();
                 match self.library.draw(p, ui, main, kind, &stories, actions) {
@@ -1560,11 +1571,26 @@ impl Chat {
             }
         };
         frame(p, main);
-        if !modal {
+        if self.settings_open {
+            ui.blocker = if spotlight { Some(view) } else { self.menu_rect.filter(|_| self.menu.is_some()) };
+            let totals = self.totals();
+            let utility =
+                self.utility_model.as_deref().map_or("Same as the story", |id| model_name(&self.models, id)).to_owned();
+            let (anchor, left) =
+                self.settings.draw(p, ui, view, scheme, self.reasoning_view, &utility, totals, actions);
+            if let Some(anchor) = anchor {
+                self.menu = if self.menu == Some(Menu::UtilityModel) { None } else { Some(Menu::UtilityModel) };
+                self.menu_scroll = 0.0;
+                self.utility_anchor = anchor;
+            } else if left && settings_were_open && self.menu.is_none() {
+                self.settings_open = false;
+            }
+        }
+        if !spotlight {
             ui.blocker = None;
         }
         self.draw_open_menu(p, ui, toolbar, actions);
-        if !modal {
+        if !spotlight {
             self.draw_notices(p, ui, main, actions);
         }
         if let Some(spotlight) = &mut self.spotlight {
@@ -1919,6 +1945,7 @@ mod tests {
             input_types: Vec::new(),
             context_window: 0,
             reasoning_levels: levels.iter().map(|l| (*l).to_owned()).collect(),
+            supported_parameters: Vec::new(),
         };
         let claude = model(&["low", "medium", "high", "xhigh", "max"]);
         assert_eq!(Reasoning::choices(Some(&claude))[..2], [Reasoning::Auto, Reasoning::Low]);
@@ -1978,6 +2005,20 @@ mod tests {
     }
 
     #[test]
+    fn creativity_sets_a_temperature_where_the_model_takes_one() {
+        let mut chat = new_chat();
+        assert_eq!(start(&mut chat, "Hi.").temperature, None, "balanced leaves the model's own");
+        chat.stop(&mut Vec::new());
+        chat.current().direction.creativity = openrp_core::Creativity::Wild;
+        assert!(start(&mut chat, "Again.").temperature.is_some_and(|t| t > 1.0));
+        chat.stop(&mut Vec::new());
+        // A model whose server lists what it takes, without a temperature, gets none.
+        let strict = Model { id: chat.model.clone(), supported_parameters: vec!["tools".into()], ..Model::default() };
+        chat.models = vec![strict];
+        assert_eq!(start(&mut chat, "Once more.").temperature, None);
+    }
+
+    #[test]
     fn titles_are_typed_in_place() {
         let mut chat = new_chat();
         let job = start(&mut chat, "Hello there.");
@@ -2018,6 +2059,7 @@ mod tests {
             scene: String::new(),
             memories: vec!["A fact.".into()],
             note: "Keep it light.".into(),
+            direction: Direction::default(),
             reviewed: 0,
             messages: vec![StoredMessage::new(Role::User, "hi".into()), reply],
         };

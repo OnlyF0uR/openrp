@@ -34,8 +34,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use openrp_core::{
-    CastMember, Completion, Error, InputItem, LoreEntry, Player, Role, StoredMessage, StoryChange, StreamEvent,
-    ToolCall, ToolChoice, ToolResult, Usage, macros, new_id, unix_now,
+    CastMember, Completion, Creativity, Direction, Error, InputItem, Length, LoreEntry, Model, Player, Role,
+    StoredMessage, StoryChange, StreamEvent, ToolCall, ToolChoice, ToolResult, Usage, macros, new_id, unix_now,
 };
 
 use super::tools;
@@ -87,16 +87,22 @@ const PLAIN_CHAT: &str =
 const ROLEPLAY: &str = "You play every character in an interactive roleplay story except the user's. There is no narrator: the \
     story is told only through what the characters say and do, in speak calls. The app shows nothing else.\n\n\
     The latest message ends with the story state, written by the app, not the user: the scene and who is in it (always \
-    current), lore, memories and the author's note.\n\n\
+    current), lore, memories and the user's direction.\n\n\
     Format:\n\
     - Every reply is one speak call. Write no text outside tool calls.\n\
     - In each message, action is what the character does (movement, expression, what they notice), text exactly what they \
     say.\n\
     - Only characters in the scene respond: whoever the user addresses, plus anyone present who would react.\n\
-    - Never speak, act or decide for the user's character. End where the user can respond.\n\n\
+    - Never speak, act or decide for the user's character. End where the user can respond: on something said or done that \
+    invites an answer, never by asking what they do next.\n\n\
     Writing:\n\
     - Characters act on their own goals, knowledge and mood: they take initiative, make choices, disagree and keep secrets. \
     They know only what they have seen or been told.\n\
+    - Each character sounds like themselves: their own words, rhythm and manners, unlike anyone else's. They talk and react to \
+    each other, not only to the user's character.\n\
+    - Show, don't tell: a concrete detail the user can see, hear or feel, not a feeling named or summed up. No stock phrases.\n\
+    - The world pushes back: actions have consequences, and people stay as guarded, difficult or dangerous as their \
+    description makes them. Nothing succeeds just because the user's character tries it.\n\
     - Move the story forward in every reply: a decision, a reveal, a complication or an event. Events (a storm, a noise, a \
     door slamming) show through what present characters notice and do.\n\
     - Do not repeat or paraphrase the user's message. Do not reuse openings, gestures or turns of phrase from earlier replies.\n\
@@ -136,8 +142,8 @@ const LORE_BUDGET: usize = 8_000;
 const STATE: &str = "[Story state, kept by the app: not part of the user's message]";
 /// Opens the memories section of the story state.
 const MEMORIES: &str = "Facts from earlier in the story. When a later turn contradicts one, the turn wins.";
-/// Opens the author's note section of the story state.
-const NOTE: &str = "The user's guidance for the whole story. Follow it in every reply.";
+/// Opens the direction section of the story state.
+const DIRECTION: &str = "The user's direction for the whole story. Follow it in every reply.";
 /// Introduces an out-of-character instruction sent with a user message.
 const OOC: &str = "(OOC: the user's instruction for this reply, not something their character says or does.)";
 /// Opens the list of cast members away from the scene.
@@ -148,6 +154,47 @@ const UNDESCRIBED: &str = "(Not described yet: keep them consistent with what th
 const NOBODY_HERE: &str = "No one is in the scene yet. In your speak call, introduce whoever the user meets, each with a \
     personal name and a description, and have them act: the people the user's message refers to (one person for a group), or, \
     if it refers to no one, the one character the moment needs most.";
+
+/// What the story's creativity asks of the model; `None` at the default.
+fn creativity_text(creativity: Creativity) -> Option<&'static str> {
+    match creativity {
+        Creativity::Grounded => Some(
+            "Keep it grounded: plausible, consistent choices and restrained prose. No melodrama, no sudden twists.",
+        ),
+        Creativity::Balanced => None,
+        Creativity::Vivid => Some(
+            "Write vividly: concrete sensory detail, feeling shown through what characters do, and choices that \
+             surprise. Take risks with what happens next.",
+        ),
+        Creativity::Wild => Some(
+            "Go wild: bold, surprising turns, striking imagery, and characters who act on impulse and say what others \
+             would not. Never safe or predictable, but always true to who they are.",
+        ),
+    }
+}
+
+/// What the story's length asks of every reply; `None` at the default.
+fn length_text(length: Length) -> Option<&'static str> {
+    match length {
+        Length::Short => Some("Keep replies short: a line or two from whoever matters most."),
+        Length::Medium => None,
+        Length::Long => {
+            Some("Give replies room: several messages, fuller actions, and the scene carried through a whole beat.")
+        }
+    }
+}
+
+/// The sampling temperature a story's creativity asks for, for providers
+/// that take one; `None` leaves the model's own.
+// ponytail: fixed values per level; a free slider if people want finer control.
+pub(super) fn temperature(creativity: Creativity) -> Option<f32> {
+    match creativity {
+        Creativity::Grounded => Some(0.6),
+        Creativity::Balanced => None,
+        Creativity::Vivid => Some(1.1),
+        Creativity::Wild => Some(1.25),
+    }
+}
 
 /// `(Formerly called …)` for someone with former `aliases`; empty without.
 fn formerly(aliases: &[String]) -> String {
@@ -261,14 +308,14 @@ pub(super) fn lore_start(entries: &[Entry]) -> usize {
 
 /// What a story is like right now, sent after the latest message: the
 /// `scene`, who of the `cast` is in it and who is elsewhere, the `lore` the
-/// latest turns call for, the `memories` and the author's `note`, which
-/// weighs most there, at the end.
+/// latest turns call for, the `memories`, and the user's `direction` and
+/// `note`, which weigh most there, at the end.
 pub(super) fn story_state(
     cast: &[CastMember],
     lore: &[String],
     memories: &[String],
     scene: &str,
-    note: &str,
+    (direction, note): (Direction, &str),
 ) -> String {
     let mut state = STATE.to_owned();
     let scene = scene.trim();
@@ -297,8 +344,13 @@ pub(super) fn story_state(
         }
     }
     let note = note.trim();
-    if !note.is_empty() {
-        let _ = write!(state, "\n\n# Author's note\n\n{NOTE}\n\n{note}");
+    let lines: Vec<&str> = [creativity_text(direction.creativity), length_text(direction.length)]
+        .into_iter()
+        .flatten()
+        .chain((!note.is_empty()).then_some(note))
+        .collect();
+    if !lines.is_empty() {
+        let _ = write!(state, "\n\n# Direction\n\n{DIRECTION}\n\n{}", lines.join("\n\n"));
     }
     state
 }
@@ -399,6 +451,8 @@ pub struct SendJob {
     pub tools: bool,
     /// `tool_choice`, or `None` to let the model decide.
     pub tool_choice: Option<ToolChoice<'static>>,
+    /// Sampling temperature, or `None` for the model's own.
+    pub temperature: Option<f32>,
     /// Raised to abort the stream.
     pub cancel: Arc<AtomicBool>,
 }
@@ -708,6 +762,10 @@ impl Chat {
         let instructions = self.instructions(id);
         let state = self.state(id);
         let budget = keep_budget(compact_limit(self.context_window()));
+        // The story's creativity, as a temperature the model takes; a summary keeps the model's own.
+        let creativity = self.conversations.iter().find(|c| c.id == id).map(|c| c.direction.creativity);
+        let takes = self.models.iter().find(|m| m.id == model).is_none_or(Model::takes_temperature);
+        let temperature = creativity.filter(|_| !compaction && takes).and_then(temperature);
         let Some(conversation) = self.find(id) else {
             return;
         };
@@ -765,6 +823,7 @@ impl Chat {
             } else {
                 conversation.world.is_some().then_some(ToolChoice::Required)
             },
+            temperature,
             cancel,
         };
         if id == self.current {
@@ -1204,7 +1263,7 @@ mod tests {
             lore_in_play(&world_lore, std::slice::from_ref(&mira), "Gale: Two ALES at the lantern, please.", "Gale");
         assert_eq!(found, ["The Lantern is Gale's inn.", "Mira brews her own ale."]);
         assert!(lore_in_play(&world_lore, &[], "Nothing here.", "Gale").is_empty());
-        let state = story_state(&[], &found, &[], "", "");
+        let state = story_state(&[], &found, &[], "", (Direction::default(), ""));
         assert!(state.contains(&format!("# Lore\n\n{LORE}\n\nThe Lantern is Gale's inn.")));
 
         // A story opened by a greeting starts with the user, for providers that need it.
@@ -1217,7 +1276,7 @@ mod tests {
     #[test]
     fn the_story_state_rides_on_the_latest_message() {
         let member = |name: &str, present: bool| CastMember { name: name.into(), present, ..CastMember::default() };
-        let nobody = story_state(&[member("Peeta", false)], &[], &[], "", "");
+        let nobody = story_state(&[member("Peeta", false)], &[], &[], "", (Direction::default(), ""));
         assert!(
             nobody.starts_with(STATE)
                 && nobody.contains(NOBODY_HERE)
@@ -1230,12 +1289,21 @@ mod tests {
             &[],
             &memories,
             " The woods. ",
-            " Keep it short. ",
+            (Direction::default(), " Keep it short. "),
         );
         let expected = format!(
-            "# The scene\n\nThe woods.\n\n# In the scene\n\nKatniss, Rue\n\n# Memories\n\n{MEMORIES}\n\n- Peeta saved Katniss.\n- Rue is hurt.\n\n# Author's note\n\n{NOTE}\n\nKeep it short."
+            "# The scene\n\nThe woods.\n\n# In the scene\n\nKatniss, Rue\n\n# Memories\n\n{MEMORIES}\n\n- Peeta saved Katniss.\n- Rue is hurt.\n\n# Direction\n\n{DIRECTION}\n\nKeep it short."
         );
-        assert!(full.ends_with(&expected), "the author's note last, where it weighs most: {full}");
+        assert!(full.ends_with(&expected), "the direction last, where it weighs most: {full}");
+        // Creativity and length come before the note; at their defaults they say nothing.
+        let wild = Direction { creativity: Creativity::Wild, length: Length::Short };
+        let directed = story_state(&[], &[], &[], "", (wild, "Slow burn."));
+        let direction = directed.split("# Direction").nth(1).expect("a direction section");
+        let (bold, short, note) =
+            (direction.find("Go wild"), direction.find("Keep replies short"), direction.find("Slow burn."));
+        assert!(bold < short && short < note && bold.is_some(), "{direction}");
+        assert!(!story_state(&[], &[], &[], "", (Direction::default(), " ")).contains("# Direction"));
+        assert_eq!((temperature(Creativity::Balanced), temperature(Creativity::Grounded)), (None, Some(0.6)));
 
         // After the prompt, or after the result of the last call.
         let mut items = vec![InputItem::text(Role::User, "Hi.")];

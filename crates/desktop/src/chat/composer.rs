@@ -65,7 +65,7 @@ impl Command {
         match self {
             Self::Clear => "Delete this story and start it over",
             Self::Ooc => "Tell the AI something out of character",
-            Self::Note => "Author's note for the whole story",
+            Self::Note => "Direction for the whole story: creativity, length and a note",
             Self::Memory => "What the story remembers",
             Self::Memorize => "Add the latest turns to the memories",
             Self::Duplicate => "Copy this story exactly",

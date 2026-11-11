@@ -32,6 +32,52 @@ use crate::responses::{Role, Usage};
 /// since `.` is not a valid id character.
 const INDEX_FILE: &str = ".index.json";
 
+/// How a story is told, as the user directs it: how boldly, and how much
+/// each reply says. The app turns it into instructions (and, where the
+/// provider takes one, a sampling temperature).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Direction {
+    /// How freely the story is written.
+    #[serde(skip_serializing_if = "is_default")]
+    pub creativity: Creativity,
+    /// How long replies run.
+    #[serde(skip_serializing_if = "is_default")]
+    pub length: Length,
+}
+
+/// How freely a story is written. A value from a newer version reads as
+/// the default.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Creativity {
+    /// Plausible, consistent, restrained.
+    Grounded,
+    /// Vivid detail and surprising choices.
+    Vivid,
+    /// Bold turns and impulsive characters.
+    Wild,
+    /// As the model writes by default. Last: what is not known reads as it.
+    #[default]
+    #[serde(other)]
+    Balanced,
+}
+
+/// How much each reply of a story says. A value from a newer version reads
+/// as the default.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Length {
+    /// A line or two.
+    Short,
+    /// A full beat of the scene.
+    Long,
+    /// As the moment needs. Last: what is not known reads as it.
+    #[default]
+    #[serde(other)]
+    Medium,
+}
+
 /// One saved conversation.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -69,6 +115,9 @@ pub struct Session {
     /// sent with every request.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub note: String,
+    /// How boldly and at what length the story is told.
+    #[serde(skip_serializing_if = "is_default")]
+    pub direction: Direction,
     /// How many of the story's prompts (and their replies) the memory
     /// reviews have read, so the next one covers only what came after.
     #[serde(skip_serializing_if = "is_default")]
@@ -430,6 +479,7 @@ pub struct SearchHit {
     pub updated: u64,
 }
 
+/// Whether `value` is its type's default, so it is left out of the file.
 fn is_default<T: Default + PartialEq>(value: &T) -> bool {
     *value == T::default()
 }
@@ -952,5 +1002,22 @@ mod tests {
         message.change = Some(change);
         let json = serde_json::to_string(&message).unwrap();
         assert_eq!(serde_json::from_str::<StoredMessage>(&json).unwrap(), message);
+    }
+
+    #[test]
+    fn direction_is_kept_only_when_set_and_survives_newer_values() {
+        let plain = serde_json::to_value(Session::default()).unwrap();
+        assert!(plain.get("direction").is_none(), "the default is not written");
+        let directed = Session {
+            direction: Direction { creativity: Creativity::Wild, length: Length::Medium },
+            ..Session::default()
+        };
+        let json = serde_json::to_value(&directed).unwrap();
+        assert_eq!(json["direction"], serde_json::json!({ "creativity": "wild" }));
+        assert_eq!(serde_json::from_value::<Session>(json).unwrap().direction, directed.direction);
+        // A value a newer version wrote reads as the default, not as an unreadable story.
+        let newer: Session =
+            serde_json::from_str(r#"{"direction":{"creativity":"unhinged","length":"epic"}}"#).unwrap();
+        assert_eq!(newer.direction, Direction::default());
     }
 }

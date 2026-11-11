@@ -290,6 +290,34 @@ impl<'a> Painter<'a> {
         self.atlas_full |= !ok;
     }
 
+    /// Draws the app's mark ([`crate::logo`]), `size` logical pixels square,
+    /// centred on `center`, in `color`: rasterised from its outline at
+    /// exactly this size and kept in the glyph atlas, like a letter.
+    pub fn logo(&mut self, center: (f32, f32), size: f32, color: Color) {
+        let s = self.scale;
+        let px = (size * s).round().max(1.0);
+        let Some(entry) = self.atlas.mark(px, || crate::logo::rasterize(px)) else {
+            self.atlas_full = true;
+            return;
+        };
+        if entry.w == 0 {
+            return;
+        }
+        let (w, h) = (f32::from(entry.w), f32::from(entry.h));
+        // The bitmap sits where its ink is within the square, measured from the square's bottom-left.
+        let left = (center.0 * s - px * 0.5).round() + f32::from(entry.xmin);
+        let top = (center.1 * s - px * 0.5).round() + px - f32::from(entry.ymin) - h;
+        let clip = self.clip;
+        self.out.push(Instance {
+            rect: [left / s, top / s, w / s, h / s],
+            clip: [clip.x, clip.y, clip.right(), clip.bottom()],
+            color,
+            color2: color,
+            uv: [f32::from(entry.x), f32::from(entry.y), w, h],
+            params: [0.0, 0.0, 0.0, KIND_GLYPH],
+        });
+    }
+
     /// Lays out and draws a single line; returns its width.
     pub fn label(&mut self, text: &str, style: Style, x: f32, y: f32, color: Color) -> f32 {
         let layout = self.layout(text, style, None);

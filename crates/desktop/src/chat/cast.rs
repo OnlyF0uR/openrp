@@ -17,7 +17,7 @@
 //! message of the first character in the scene whose library character has
 //! one, the others to swipe to (see [`Chat::greet`]).
 
-use openrp_core::{CastMember, StoredMessage, macros};
+use openrp_core::{CastMember, Direction, StoredMessage, macros};
 use winit::window::CursorIcon;
 
 use super::{Chat, Entry, Load, Menu, MenuItem, Page, tools};
@@ -132,7 +132,7 @@ impl Chat {
             &lore,
             &conversation.memories,
             &conversation.scene,
-            &conversation.note,
+            (conversation.direction, &conversation.note),
         ))
     }
 
@@ -285,7 +285,8 @@ impl Chat {
         let cast = conversation.cast.clone();
         let player = conversation.player.clone();
         let scene = conversation.scene.split_whitespace().collect::<Vec<_>>().join(" ");
-        let (memories, has_note) = (conversation.memories.len(), !conversation.note.trim().is_empty());
+        let directed = !conversation.note.trim().is_empty() || conversation.direction != Direction::default();
+        let (memories, has_note) = (conversation.memories.len(), directed);
         let reviewing = conversation.reviewing.is_some();
         let world = conversation.world.clone();
         let world = world.as_deref().and_then(|w| self.library.get(Kind::World, w));
@@ -372,11 +373,11 @@ impl Chat {
         }
         y = card.bottom() + 10.0;
 
-        // What the story remembers, and the author's note.
+        // What the story remembers, and how the user directs it.
         let updating = if reviewing { " …" } else { "" };
         let memory_label =
             if memories == 0 { format!("Memories{updating}") } else { format!("Memories · {memories}{updating}") };
-        let note_label = if has_note { "Note ✓" } else { "Author's note" };
+        let note_label = if has_note { "Direction ✓" } else { "Direction" };
         let half = ((content_w - 8.0) * 0.5).floor();
         // Always drawn enabled; only a click inside the panel's body counts.
         let open_memories =
@@ -489,7 +490,7 @@ impl Chat {
         } else if open_memories {
             self.edit_memories();
         } else if open_note {
-            self.edit_note();
+            self.edit_direction();
         } else if edit_you {
             self.edit_player();
         } else if let Some((index, click)) = clicked {

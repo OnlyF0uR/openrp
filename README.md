@@ -61,7 +61,7 @@ cargo clippy --workspace --all-targets
   in the sidebar. The **cast panel** beside the story (over it, in a narrow window; the panel
   icon at the header's right shows and hides it) holds what the
   story is made of: the world's picture, the current scene (click it to change it yourself),
-  **Memories** and the **Author's note**, who you play, and the cast, in the scene and
+  **Memories** and **Direction**, who you play, and the cast, in the scene and
   elsewhere, each with a portrait and the first line of their description. Click a member to
   move them into the scene or out of it; their ⋯ menu edits, stores or deletes them. **+ Add characters** opens a picker of your library (the story keeps its own
   copy, so editing or deleting them in the library changes no story): every click adds one and
@@ -105,7 +105,7 @@ cargo clippy --workspace --all-targets
   character and the whole cast, described, with their example dialogue, and the lore marked
   Always), so providers cache it with the history after it. What changes every turn (the
   scene, who is in it and who is elsewhere, the lore the latest turns mention, the memories and
-  the author's note) is sent after your latest message as the story state, and never saved.
+  your direction) is sent after your latest message as the story state, and never saved.
 - **Edit, Regenerate, swipes, Delete**: hovering a turn (your message and everything that
   answered it) shows them left of Copy. **Edit** makes all of its replies editable at once, a
   box per character bubble under their portrait and name; saving rewrites their speech in the
@@ -147,8 +147,13 @@ cargo clippy --workspace --all-targets
   memories: it drops those the turns made outdated, merges related ones and adds what the story
   must not forget (Memory shows "…" while it works; it is billed with the next reply). One that fails or takes over three minutes leaves its turns for the next review.
   `/memorize` runs it at once.
-- **Author's note and OOC**: **Author's note** in the cast panel holds your guidance for the whole story
-  (tone, pacing, limits), sent last in every request. For one reply only, end a message with a
+- **Direction and OOC**: **Direction** in the cast panel (or `/note`) sets how the story is told:
+  **Creativity** (Grounded, Balanced, Vivid, Wild) and **Length** (Short, Medium, Long), each sent
+  as an instruction, and a note with your guidance for the whole story (tone, pacing, limits), all
+  sent last in every request. Creativity also sets the sampling temperature on providers that take
+  one (Grounded 0.6, Vivid 1.1, Wild 1.25; Balanced leaves the model's own); Claude's current
+  models refuse a temperature, so there it works through the instruction alone, and so it does for
+  a model whose listed parameters leave temperature out. For one reply only, end a message with a
   line starting `/ooc` (or send just `/ooc …` to nudge the story): the model is told it is your
   instruction, not your character speaking, and it shows muted under your message. Your own
   `*actions*` are muted too, like the characters'.
@@ -159,7 +164,7 @@ cargo clippy --workspace --all-targets
 - **Duplicate, export and delete**: a session's ⋯ in the sidebar deletes it,
   or (like `/duplicate` and `/frame`) copies it exactly, with every message, memory and the
   scene (replies are not billed twice), or as a **frame**: the world, your character, the cast
-  and the author's note, ready for a new story. **Export as text** saves a readable transcript;
+  and the direction, ready for a new story. **Export as text** saves a readable transcript;
   **Export as JSONL** a SillyTavern chat, one line per character's message, which SillyTavern
   imports. A notice then offers the folder it went to.
 - **Slash commands** in the composer, completed as you type (Tab completes, Enter runs, Esc
@@ -171,12 +176,16 @@ cargo clippy --workspace --all-targets
   window, double-click it to maximize; on Windows and Linux with its own minimize, maximize and
   close buttons, and the window's edges resize it; macOS keeps its traffic lights). Below it the
   sidebar and the cast panel sit on the window, and the page floats between them on a rounded
-  canvas; on a dark scheme a story's world tints the top of it with its picture. Three schemes:
+  canvas; on a dark scheme a story's world tints the top of it with its picture. The sidebar
+  lists the library (Worlds, Characters, Personas) and under it every story with its world's
+  picture; search and a new story are icons over the stories, the settings an icon at its
+  foot. Three schemes:
   **Black** (the default), **White**, and **Amber**, a warm cream that is light but easy on the
   eyes, with little blue in it. Icons are Lucide's.
 - **Story titles**: a story is named after its first prompt; click its title in the header to
   type another (Enter or a click elsewhere keeps it, Esc drops it).
-- **Settings**, in tabs: Appearance (Black, White and Amber schemes, reasoning display),
+- **Settings**, a window over the page (Ctrl/Cmd+, or the cog; Esc, its cross or a click
+  outside closes it) with a page per section: Appearance (Black, White and Amber schemes, reasoning display),
   Models (a **background model** for memory reviews, summaries and generated characters: a
   cheaper one saves money, and summaries stay on the story's model when it holds less
   context), Usage totals, and Provider (the saved providers, one in use; add, switch to or remove one, or forget the
@@ -217,6 +226,10 @@ cargo clippy --workspace --all-targets
   The same pipeline draws offscreen for `chat/snapshot.rs`, which saves screens in every scheme
   as PNGs to look at the design:
   `OPENRP_SNAPSHOTS=<folder> cargo test -p openrp snapshots -- --ignored`.
+- `logo.rs`: the app's mark, the letters RP, as an outline drawn through the glyph atlas at any
+  size (`Painter::logo`). The app icon (`assets/icon/`) and the logo in `branding/` are that
+  mark on a dark tile, drawn again with
+  `OPENRP_ICON=assets/icon cargo test -p openrp icon -- --ignored`.
 - `atlas.rs`: shelf packing for the glyph and image atlases, evicting the least recently
   drawn shelf when full.
 - `image.rs`: thumbnails: PNG/JPEG/WebP decoding (with JPEG EXIF orientation) on worker threads,
@@ -237,7 +250,7 @@ cargo clippy --workspace --all-targets
   form with its sections (greetings, example dialogue, lore) and portraits.
 - `chat/cast.rs`: Play, the cast panel and the story's system prompt and state (built in
   `chat/stream.rs`); `chat/dialog.rs`: the form asking who you play, and the dialogs for cast
-  members, the scene, the author's note and memories; `chat/tools.rs`: the `speak`,
+  members, the scene, the direction and memories; `chat/tools.rs`: the `speak`,
   `create_character`, `update_character` and `remember` tools, how they show, and parsing
   their arguments while they stream; `chat/names.rs`: telling characters apart by name;
   `chat/turns.rs`: editing, regenerating, swiping (replies and greetings) and deleting turns;
@@ -269,7 +282,7 @@ lives in `~/.openrp/`:
 - `config.toml`: the provider's base URL and key, model, background model, reasoning effort and display, colour scheme, the window's
   size and the zoom. Lines a newer version added are kept as they are.
 - `sessions/<id>.json`: one file per story, with its world, your character, its cast (copies),
-  its scene, memories and author's note, each reply's tool calls, and each reply's tokens and cost at the
+  its scene, memories and direction (creativity, length, note), each reply's tool calls, and each reply's tokens and cost at the
   prices of the time. `.index.json` next to them holds titles and totals, so startup reads
   only the index; a session's messages load when it is opened.
 - `worlds/<id>.json`, `characters/<id>.json` and `personas/<id>.json`: one file per world,

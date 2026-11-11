@@ -36,6 +36,16 @@ pub fn rasterize(face: &Face<'_>, glyph: GlyphId, px: f32) -> Option<Bitmap> {
     rasterize_lines(&path.lines)
 }
 
+/// Rasterises an outline that `draw` describes in units (y up), at `scale`
+/// pixels per unit: for marks that are no font's glyphs. `None` when it has
+/// no ink.
+pub fn rasterize_outline(scale: f32, draw: impl FnOnce(&mut dyn OutlineBuilder)) -> Option<Bitmap> {
+    let mut path = Flattener { scale, ..Flattener::default() };
+    draw(&mut path);
+    path.close();
+    rasterize_lines(&path.lines)
+}
+
 /// Rasterises closed polygons given as line segments in pixels, y up.
 fn rasterize_lines(lines: &[Segment]) -> Option<Bitmap> {
     // Bounds come from the flattened geometry itself, so no point can fall

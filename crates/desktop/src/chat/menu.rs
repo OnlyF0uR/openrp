@@ -440,7 +440,7 @@ impl Chat {
         let view = p.clip();
         // Everything beneath is covered: nothing there reacts.
         self.menu_rect = Some(view);
-        p.rect(view, fade(t.scrim, 0.7), 0.0);
+        p.rect(view, t.scrim, 0.0);
         let width = content.width.min(view.w - 48.0);
         // Within the window at any zoom: its list takes what is left.
         let height = (view.h - 48.0).clamp(240.0, 720.0);

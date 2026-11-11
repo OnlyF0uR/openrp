@@ -31,7 +31,7 @@ fn snapshots() {
     let fonts = Fonts::load();
     for scheme in Scheme::ALL {
         let mut settings = story(&dir);
-        settings.page = Page::Settings;
+        settings.settings_open = true;
         let mut worlds = story(&dir);
         worlds.page = Page::Library(Kind::World);
         let mut menu = story(&dir);
@@ -42,6 +42,8 @@ fn snapshots() {
         spotlight.open_spotlight();
         let mut dialog = story(&dir);
         dialog.edit_scene();
+        let mut direction = story(&dir);
+        direction.edit_direction();
         let mut rename = story(&dir);
         let mut editor = crate::editor::Editor::default();
         editor.insert("The heron letter");
@@ -58,6 +60,7 @@ fn snapshots() {
             ("picker", picker),
             ("spotlight", spotlight),
             ("dialog", dialog),
+            ("direction", direction),
             ("form", form),
             ("rename", rename),
         ];
@@ -148,6 +151,7 @@ fn story(dir: &Path) -> Chat {
         scene: "The night market under the old aqueduct; paper lanterns, rain on canvas awnings.".into(),
         memories: vec!["Wren carries a letter sealed with a heron.".into()],
         note: String::new(),
+        direction: openrp_core::Direction::default(),
         reviewed: 0,
         messages: vec![
             StoredMessage::new(
@@ -204,4 +208,43 @@ fn write_png(path: &Path, (w, h): (u32, u32), rgba: &[u8]) {
     encoder.set_color(png::ColorType::Rgba);
     encoder.set_depth(png::BitDepth::Eight);
     encoder.write_header().and_then(|mut writer| writer.write_image_data(rgba)).expect("snapshot written");
+}
+
+/// Draws the app's icon (its mark on a dark tile) at every size the
+/// platforms want, into the folder `OPENRP_ICON` names (the test runs in
+/// `crates/desktop`, so a relative path starts there):
+/// `OPENRP_ICON=assets/icon cargo test -p openrp icon -- --ignored`
+/// It also draws the logo for use outside the app into `branding/` at the
+/// workspace's root: square to its corners, as whoever shows it rounds it.
+#[test]
+#[ignore = "draws on the GPU; run by hand to make the icon again"]
+fn icon() {
+    let Some(dir) = std::env::var_os("OPENRP_ICON").map(PathBuf::from) else { return };
+    let Some(mut gpu) = Offscreen::new() else { return };
+    let fonts = Fonts::load();
+    let branding = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../branding");
+    std::fs::create_dir_all(&branding).expect("branding folder");
+    let sizes = [16u32, 20, 24, 32, 40, 48, 64, 256, 1024].map(|size| (size, false));
+    for (size, square) in sizes.into_iter().chain([(500, true), (2000, true)]) {
+        let (mut atlas, mut images) = (GlyphAtlas::default(), ImageAtlas::default());
+        let side = size as f32;
+        let view = Rect::new(0.0, 0.0, side, side);
+        let mut instances = Vec::new();
+        let palette = Scheme::Black.palette();
+        let mut p = Painter::new(&fonts, (&mut atlas, &mut images), &mut instances, 1.0, view, palette);
+        // macOS wants air around the tile; the others fill the square.
+        let inset = if size == 1024 { side * 0.1 } else { 0.0 };
+        let tile = Rect::new(inset, inset, side - 2.0 * inset, side - 2.0 * inset);
+        // The square one keeps its mark clear of a round crop.
+        let (radius, mark) = if square { (0.0, tile.w * 0.85) } else { (tile.w * 0.225, tile.w) };
+        p.gradient(tile, crate::paint::hex(0x24_2428), crate::paint::hex(0x0C_0C0E), radius);
+        p.logo((side * 0.5, side * 0.5), mark, crate::paint::hex(0xF2_EEE6));
+        let pixels = gpu.render((size, size), &instances, (&mut atlas.uploads, &mut images.uploads), 1.0, [0.0; 4]);
+        let path = match size {
+            _ if square => branding.join(format!("openrp-{size}.png")),
+            1024 => dir.join("macos.png"),
+            _ => dir.join(format!("{size}.png")),
+        };
+        write_png(&path, (size, size), &pixels);
+    }
 }

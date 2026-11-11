@@ -186,8 +186,6 @@ pub mod icon {
     pub const DRAMA: char = '\u{e521}';
     /// Three dots: more.
     pub const ELLIPSIS: char = '\u{e0b6}';
-    /// A quill: the brand.
-    pub const FEATHER: char = '\u{e0be}';
     /// A globe: worlds.
     pub const GLOBE: char = '\u{e0e8}';
     /// A plus: new.
@@ -206,6 +204,16 @@ pub mod icon {
     pub const X: char = '\u{e1b2}';
     /// A wand with sparkles: the AI writes it.
     pub const WAND: char = '\u{e357}';
+    /// A painter's palette: how the app looks.
+    pub const PALETTE: char = '\u{e1dd}';
+    /// Sparkles: the models.
+    pub const SPARKLES: char = '\u{e412}';
+    /// A bar chart: usage.
+    pub const CHART: char = '\u{e2a3}';
+    /// A plug: the provider.
+    pub const PLUG: char = '\u{e37f}';
+    /// A folder: where the data is.
+    pub const FOLDER: char = '\u{e0d7}';
 }
 
 /// A square ghost button showing `glyph`, faint until hovered. Returns
@@ -265,10 +273,13 @@ pub fn button(p: &mut Painter, ui: &mut Ui, rect: Rect, label: &str, style: Butt
     enabled && ui.clicked(rect)
 }
 
-/// Draws the brand mark: a quill on an accent tile.
+/// Draws the brand: the app's icon in small, its mark on a dark tile, the
+/// same in every scheme.
 pub fn logo(p: &mut Painter, rect: Rect) {
-    p.rect(rect, p.theme.accent, rect.w * 0.28);
-    icon::draw(p, icon::FEATHER, (rect.x + rect.w * 0.5, rect.y + rect.h * 0.5), rect.w * 0.56, p.theme.on_accent);
+    let radius = rect.w * 0.225;
+    p.gradient(rect, crate::paint::hex(0x24_2428), crate::paint::hex(0x0C_0C0E), radius);
+    p.bordered(rect, [0.0; 4], radius, 1.0, fade(p.theme.border_strong, 0.7));
+    p.logo((rect.x + rect.w * 0.5, rect.y + rect.h * 0.5), rect.w, crate::paint::hex(0xF2_EEE6));
 }
 
 /// A small chevron in a 7-pixel box whose top-left is `(x, y)`, pointing
@@ -287,6 +298,130 @@ pub fn keycap(p: &mut Painter, keys: &str, right: f32, y: f32) -> f32 {
     p.bordered(cap, t.surface, 5.0, 1.0, t.border_strong);
     p.text(&text, cap.x + 6.0, cap.y + (cap.h - text.height()) * 0.5, t.text_muted);
     cap.w
+}
+
+/// A scrolled view: where it is, where it is going, and how far it can go.
+///
+/// The wheel moves the target, never past the ends known from the last
+/// frame, and the position eases after it: nothing is ever drawn beyond the
+/// content and snapped back.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Scroll {
+    pos: f32,
+    target: f32,
+    max: f32,
+}
+
+impl Scroll {
+    /// Takes the wheel (when `hovered`) and returns the offset to draw at.
+    pub fn update(&mut self, ui: &mut Ui, hovered: bool) -> f32 {
+        if hovered && ui.scroll != 0.0 {
+            self.target = (self.target + ui.scroll).clamp(0.0, self.max);
+        }
+        let gap = self.target - self.pos;
+        if gap.abs() < 0.5 {
+            self.pos = self.target;
+        } else {
+            self.pos += gap * (1.0 - (-ui.dt * 22.0).exp());
+            ui.animating = true;
+        }
+        self.pos.round()
+    }
+
+    /// Tells it how tall the content turned out to be in a view `view` tall.
+    pub fn finish(&mut self, ui: &mut Ui, content: f32, view: f32) {
+        self.max = (content - view).max(0.0);
+        self.target = self.target.min(self.max);
+        if self.pos > self.max {
+            // Content shrank under the view: draw again where it ends.
+            self.pos = self.max;
+            ui.animating = true;
+        }
+    }
+
+    /// Back to the top, at once.
+    pub fn reset(&mut self) {
+        (self.pos, self.target) = (0.0, 0.0);
+    }
+
+    /// A thin bar at the right edge of `area` showing where the view is,
+    /// when there is anything to scroll.
+    pub fn bar(&self, p: &mut Painter, area: Rect, content: f32) {
+        if self.max <= 0.0 {
+            return;
+        }
+        let track = area.h - 16.0;
+        // Not `clamp`, which panics where a window too small leaves the track no room.
+        let thumb = (track * area.h / content.max(1.0)).max(28.0).min(track.max(0.0));
+        let at = area.y + 8.0 + (track - thumb) * (self.pos / self.max).clamp(0.0, 1.0);
+        p.rect(Rect::new(area.right() - 7.0, at, 3.0, thumb), fade(p.theme.text_faint, 0.35), 1.5);
+    }
+}
+
+/// Dims `view` and draws a centred card of at most `size` over it: a modal.
+/// Returns the card and whether a click landed outside it.
+pub fn modal(p: &mut Painter, ui: &mut Ui, view: Rect, size: (f32, f32), key: &str) -> (Rect, bool) {
+    let t = p.theme;
+    let appear = ui.appear(id(("modal", key)));
+    p.rect(view, fade(t.scrim, appear), 0.0);
+    let (w, h) = (size.0.min(view.w - 48.0), size.1.min(view.h - 64.0));
+    let card = Rect::new(
+        (view.x + (view.w - w) * 0.5).round(),
+        (view.y + (view.h - h) * 0.5 + 10.0 * (1.0 - appear)).round(),
+        w,
+        h,
+    );
+    p.shadow(Rect::new(card.x, card.y + 16.0, card.w, card.h), fade(t.shadow, appear), theme::RADIUS + 4.0, 48.0);
+    p.bordered(card, t.bg, theme::RADIUS + 4.0, 1.0, t.border_strong);
+    let outside = ui.released && !card.contains(ui.mouse) && !card.contains(ui.press_pos);
+    (card, outside)
+}
+
+/// A row of a settings list: a card `rect` with `glyph` on a badge, a
+/// title and a line under it, both cut to leave `room` at the right for
+/// what the caller draws there.
+pub fn row(p: &mut Painter, rect: Rect, glyph: char, title: &str, detail: &str, room: f32) {
+    let t = p.theme;
+    p.bordered(rect, t.surface, theme::RADIUS, 1.0, t.border);
+    let badge = Rect::new(rect.x + 12.0, rect.y + (rect.h - 34.0) * 0.5, 34.0, 34.0);
+    p.bordered(badge, t.hover, 9.5, 1.0, t.border_strong);
+    icon::draw(p, glyph, (badge.x + 17.0, badge.y + 17.0), 16.0, t.text);
+    let width = rect.w - 70.0 - room;
+    let mut title = p.layout(title, theme::LABEL, None);
+    title.truncate(p.fonts, width);
+    let mut detail = p.layout(detail, theme::TINY, None);
+    detail.truncate(p.fonts, width);
+    p.text(&title, rect.x + 58.0, rect.y + rect.h * 0.5 - 17.0, t.text);
+    p.text(&detail, rect.x + 58.0, rect.y + rect.h * 0.5 + 3.0, t.text_faint);
+}
+
+/// Equal-width options in one outlined control, the selected one filled.
+/// Returns a newly clicked option.
+pub fn segmented(p: &mut Painter, ui: &mut Ui, rect: Rect, labels: &[&str], selected: usize) -> Option<usize> {
+    let t = p.theme;
+    p.bordered(rect, t.surface, theme::RADIUS_SM, 1.0, t.border_strong);
+    let w = rect.w / labels.len() as f32;
+    let mut clicked = None;
+    for (i, label) in labels.iter().enumerate() {
+        let cell = Rect::new((rect.x + i as f32 * w).round(), rect.y, w.round(), rect.h);
+        let inner = Rect::new(cell.x + 3.0, cell.y + 3.0, cell.w - 6.0, cell.h - 6.0);
+        let hovered = ui.hovered(cell) && i != selected;
+        let hover = ui.anim(id(("segment", label, rect.y.to_bits())), f32::from(u8::from(hovered)));
+        if i == selected {
+            p.rect(inner, t.active, theme::RADIUS_SM - 1.0);
+        } else {
+            p.rect(inner, fade(t.hover, hover), theme::RADIUS_SM - 1.0);
+        }
+        let color = if i == selected { t.text } else { mix(t.text_muted, t.text, hover) };
+        p.label_centered(label, theme::LABEL, cell, color);
+        if hovered {
+            ui.cursor = CursorIcon::Pointer;
+            if ui.clicked(cell) {
+                clicked = Some(i);
+            }
+        }
+    }
+    clicked
 }
 
 /// Opens the clipboard lazily; `None` when the platform has none.
@@ -361,9 +496,31 @@ pub fn edit_key(editor: &mut Editor, event: &KeyEvent, mods: ModifiersState, cb:
 
 #[cfg(test)]
 mod tests {
-    use super::icon;
+    use super::{Scroll, Ui, icon};
     use crate::text::{FontId, Fonts, TextLayout};
     use crate::theme;
+
+    #[test]
+    fn scrolling_stays_inside_the_content_and_eases() {
+        let mut ui = Ui::default();
+        let mut scroll = Scroll::default();
+        ui.begin(0.016, 0.0);
+        scroll.finish(&mut ui, 1000.0, 400.0);
+        // A big spin of the wheel cannot go past the end.
+        ui.scroll = 5000.0;
+        let first = scroll.update(&mut ui, true);
+        assert!(first > 0.0 && first < 600.0 && ui.animating, "eases towards the end: {first}");
+        ui.scroll = 0.0;
+        for _ in 0..200 {
+            scroll.update(&mut ui, true);
+        }
+        assert!((scroll.update(&mut ui, true) - 600.0).abs() < f32::EPSILON);
+        // Content that shrinks takes the view with it; the wheel elsewhere is ignored.
+        scroll.finish(&mut ui, 500.0, 400.0);
+        assert!((scroll.update(&mut ui, false) - 100.0).abs() < f32::EPSILON);
+        ui.scroll = -5000.0;
+        assert!((scroll.update(&mut ui, false) - 100.0).abs() < f32::EPSILON, "not hovered");
+    }
 
     #[test]
     fn icons_are_square_glyphs_of_the_icon_font() {
@@ -381,13 +538,17 @@ mod tests {
             icon::COPY,
             icon::DRAMA,
             icon::ELLIPSIS,
-            icon::FEATHER,
             icon::GLOBE,
             icon::PLUS,
             icon::SEARCH,
             icon::SETTINGS,
             icon::USERS,
             icon::WAND,
+            icon::PALETTE,
+            icon::SPARKLES,
+            icon::CHART,
+            icon::PLUG,
+            icon::FOLDER,
             icon::PANEL_CLOSE,
             icon::PANEL_OPEN,
             icon::X,

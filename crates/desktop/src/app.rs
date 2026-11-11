@@ -807,6 +807,7 @@ impl App {
                     input: &input,
                     tools: &specs,
                     tool_choice: job.tool_choice,
+                    temperature: job.temperature,
                 };
                 let result = client.stream_response(&request, &job.cancel, |event| {
                     let _ = proxy.send_event(WorkerEvent::Stream { conversation, stream, event });
@@ -824,6 +825,7 @@ impl App {
                     input: &[InputItem::text(Role::User, job.idea)],
                     tools: &[ToolSpec { name, description, parameters: &parameters }],
                     tool_choice: Some(ToolChoice::Function(name)),
+                    temperature: None,
                 };
                 let mut made = None;
                 let result = client.stream_response(&request, &AtomicBool::new(false), |event| {
@@ -851,6 +853,7 @@ impl App {
                     input: &[InputItem::text(Role::User, job.transcript)],
                     tools: &[ToolSpec { name, description, parameters: &parameters }],
                     tool_choice: Some(ToolChoice::Function(name)),
+                    temperature: None,
                 };
                 let (mut made, mut used) = (None, Usage::default());
                 let result = client.stream_response(&request, &job.cancel, |event| {

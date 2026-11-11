@@ -8,7 +8,7 @@
 //! Everything it changes belongs to the story only.
 
 use arboard::Clipboard;
-use openrp_core::{CastMember, Error, Player, ToolCall, new_id, rename};
+use openrp_core::{CastMember, Creativity, Direction, Error, Length, Player, ToolCall, new_id, rename};
 use winit::event::KeyEvent;
 use winit::keyboard::{Key, ModifiersState, NamedKey};
 use winit::window::CursorIcon;
@@ -18,10 +18,10 @@ use crate::app::Action;
 use crate::color::{ColorPicker, Pick, color_button};
 use crate::form::{FIELD_PAD, Fields};
 use crate::library::{Kind, Record, name_editor, portrait, text_editor};
-use crate::paint::{Painter, Rect, fade, hexa, mix};
+use crate::paint::{Painter, Rect, fade, mix};
 use crate::text::Style;
 use crate::theme;
-use crate::ui::{ButtonStyle, Ui, button, id};
+use crate::ui::{ButtonStyle, Ui, button, id, segmented};
 
 /// The form's fields. Generating uses only the first, for the idea.
 const NAME: usize = 0;
@@ -59,6 +59,49 @@ enum Kept {
     Yes,
 }
 
+/// Height of the creativity and length choices in the direction form.
+const DIRECTION_H: f32 = 8.0 + 2.0 * DIRECTION_ROW;
+/// Height of one of those choices: its label, the control and the space after.
+const DIRECTION_ROW: f32 = 22.0 + 32.0 + 20.0;
+
+/// The direction form's two choices at `(x, y)`, `width` wide: how boldly
+/// and at what length the story is told, each with a line on what the
+/// chosen one means. Returns a newly chosen direction.
+fn direction_choices(
+    p: &mut Painter,
+    ui: &mut Ui,
+    (x, y, width): (f32, f32, f32),
+    now: Direction,
+) -> Option<Direction> {
+    let t = p.theme;
+    let mut chosen = None;
+    let mut row = |p: &mut Painter, top: f32, (label, labels, at, about): (&str, &[&str], usize, &str)| {
+        p.label(label, theme::LABEL, x, top, t.text);
+        let about = p.layout(about, theme::SMALL, None);
+        p.text(&about, x + width - about.width(), top, t.text_faint);
+        segmented(p, ui, Rect::new(x, top + 22.0, width, 32.0), labels, at)
+    };
+    let creativity = [Creativity::Grounded, Creativity::Balanced, Creativity::Vivid, Creativity::Wild];
+    let at = creativity.iter().position(|c| *c == now.creativity).unwrap_or(1);
+    let about = [
+        "Plausible and restrained",
+        "As the model writes",
+        "Vivid detail, surprising turns",
+        "Bold, impulsive, unpredictable",
+    ];
+    let labels = ["Grounded", "Balanced", "Vivid", "Wild"];
+    if let Some(i) = row(p, y, ("Creativity", &labels, at, about[at])) {
+        chosen = Some(Direction { creativity: creativity[i], ..now });
+    }
+    let length = [Length::Short, Length::Medium, Length::Long];
+    let at = length.iter().position(|l| *l == now.length).unwrap_or(1);
+    let about = ["A line or two", "As the moment needs", "A full beat of the scene"];
+    if let Some(i) = row(p, y + DIRECTION_ROW, ("Length", &["Short", "Medium", "Long"], at, about[at])) {
+        chosen = Some(Direction { length: length[i], ..chosen.unwrap_or(now) });
+    }
+    chosen
+}
+
 /// Who the form describes.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum Subject {
@@ -77,8 +120,9 @@ pub(super) enum Subject {
     },
     /// Where the story is now and what it is like there.
     Scene,
-    /// The author's note: the user's guidance for the whole story.
-    Note,
+    /// How the user directs the story: creativity and length as chosen so
+    /// far, and their note (the form's one field).
+    Direction(Direction),
     /// The story's memories, one per line.
     Memory,
 }
@@ -97,7 +141,7 @@ fn memories(fields: &Fields) -> Vec<String> {
 impl Subject {
     /// Shows one free-text field (the first) rather than name and description.
     fn single(&self) -> bool {
-        matches!(self, Self::Generate { .. } | Self::Scene | Self::Note)
+        matches!(self, Self::Generate { .. } | Self::Scene | Self::Direction(_))
     }
 }
 
@@ -308,10 +352,10 @@ impl Chat {
         self.open_form(Subject::Scene, &scene, "");
     }
 
-    /// Opens the form to write the story's author's note.
-    pub(super) fn edit_note(&mut self) {
-        let note = self.current().note.clone();
-        self.open_form(Subject::Note, &note, "");
+    /// Opens the form directing the story: creativity, length and a note.
+    pub(super) fn edit_direction(&mut self) {
+        let (note, direction) = (self.current().note.clone(), self.current().direction);
+        self.open_form(Subject::Direction(direction), &note, "");
     }
 
     /// Opens the story's memories: a field each, to change, remove or add to.
@@ -365,7 +409,9 @@ impl Chat {
             return;
         }
         // The scene may be emptied: the model then sets it afresh.
-        if !matches!(subject, Subject::Scene | Subject::Note) && (name.is_empty() || self.name_taken(&subject, &name)) {
+        if !matches!(subject, Subject::Scene | Subject::Direction(_))
+            && (name.is_empty() || self.name_taken(&subject, &name))
+        {
             return;
         }
         self.character_form = None;
@@ -407,7 +453,7 @@ impl Chat {
                 });
             }
             Subject::Scene => conversation.scene = name,
-            Subject::Note => conversation.note = name,
+            Subject::Direction(direction) => (conversation.note, conversation.direction) = (name, direction),
             Subject::Memory | Subject::Generate { .. } => {}
         }
         if !conversation.is_fresh() && conversation.load == Load::Loaded {
@@ -622,13 +668,13 @@ impl Chat {
                 ["Scene", ""],
                 ["e.g. Peeta's kitchen, before dawn; warm bread, rain on the windows", ""],
             ),
-            Subject::Note => (
-                "Author's note".to_owned(),
-                "Your guidance for the whole story: tone, pacing, what to avoid. The AI follows it in every reply. For one reply only, \
-                 end a message with /ooc and your instruction.",
+            Subject::Direction(_) => (
+                "Direction".to_owned(),
+                "How the AI tells this story, in every reply. For one reply only, end a message with /ooc and your \
+                 instruction.",
                 "Save",
                 ["Note", ""],
-                ["e.g. Slow-burn and grounded. Keep replies short; let me drive the plot.", ""],
+                ["e.g. Slow-burn and grounded; let me drive the plot. Tone, pacing, what to avoid…", ""],
             ),
             // Drawn by `draw_memories`.
             Subject::Memory => return,
@@ -659,7 +705,8 @@ impl Chat {
         let more_h = if more > 0 { 34.0 } else { 0.0 };
         let personas_h =
             if personas.is_empty() { 0.0 } else { 22.0 + card_rows * (PERSONA_H + 8.0) - 8.0 + more_h + 20.0 };
-        let height = 24.0 + 30.0 + note_h + personas_h + name_block + 22.0 + body_h + error_h + FOOTER_H;
+        let direction_h = if matches!(subject, Subject::Direction(_)) { DIRECTION_H } else { 0.0 };
+        let height = 24.0 + 30.0 + note_h + personas_h + direction_h + name_block + 22.0 + body_h + error_h + FOOTER_H;
         // Never taller than the window (at any zoom): what does not fit
         // scrolls, above buttons that stay in sight.
         let card_h = height.min((area.h - 32.0).max(FOOTER_H + 120.0));
@@ -682,7 +729,7 @@ impl Chat {
             ui.blocker = Some(Rect::new(-1e9, -1e9, 2e9, 2e9));
         }
         if editing {
-            p.rect(area, hexa(0x000000, 0.35), 0.0);
+            p.rect(area, t.scrim, 0.0);
         }
         p.shadow(Rect::new(card.x, card.y + 8.0, card.w, card.h), t.shadow, theme::RADIUS + 4.0, 32.0);
         p.bordered(card, t.surface, theme::RADIUS + 4.0, 1.0, t.border_strong);
@@ -779,6 +826,12 @@ impl Chat {
             form.fields.draw(NAME, p, ui, Rect::new(x + name_x, y, inner - name_x, name_h), layout, hints[0], true);
             y += name_h + 20.0;
         }
+        if let Subject::Direction(direction) = subject {
+            if let Some(chosen) = direction_choices(p, ui, (x, y + 8.0, inner), direction) {
+                form.subject = Subject::Direction(chosen);
+            }
+            y += DIRECTION_H;
+        }
         let (label, hint) = if single { (labels[0], hints[0]) } else { (labels[1], hints[1]) };
         p.label(label, theme::LABEL, x, y, t.text);
         // Keep who the user plays, to start other stories as.
@@ -839,7 +892,7 @@ impl Chat {
 
         let ready = match generate {
             Some((busy, _)) => !busy,
-            None => matches!(subject, Subject::Scene | Subject::Note) || (!name.is_empty() && !taken),
+            None => matches!(subject, Subject::Scene | Subject::Direction(_)) || (!name.is_empty() && !taken),
         };
         let shortcut = if cfg!(target_os = "macos") { "Cmd+Enter" } else { "Ctrl+Enter" };
         let tip =
@@ -902,7 +955,7 @@ impl Chat {
             width,
             height,
         );
-        p.rect(area, hexa(0x000000, 0.35), 0.0);
+        p.rect(area, t.scrim, 0.0);
         p.shadow(Rect::new(card.x, card.y + 8.0, card.w, card.h), t.shadow, theme::RADIUS + 4.0, 32.0);
         p.bordered(card, t.surface, theme::RADIUS + 4.0, 1.0, t.border_strong);
 
@@ -1266,14 +1319,18 @@ mod tests {
         chat.character_form = None;
         assert!(chat.current().memories.is_empty());
 
-        chat.edit_note();
-        chat.character_form().unwrap().fields.insert(" Slow burn. ");
+        chat.edit_direction();
+        let form = chat.character_form().unwrap();
+        form.fields.insert(" Slow burn. ");
+        let wild = Direction { creativity: Creativity::Wild, length: Length::Long };
+        form.subject = Subject::Direction(wild);
         chat.submit_form(&mut actions);
-        assert_eq!(chat.current().note, "Slow burn.");
+        let current = chat.current();
+        assert_eq!((current.note.as_str(), current.direction), ("Slow burn.", wild));
         let id = chat.current().id;
         assert!(chat.state(id).unwrap().ends_with("Slow burn."), "the note comes last");
         assert!(
-            matches!(actions.last(), Some(Action::SaveSession(s)) if s.note == "Slow burn." && s.memories.is_empty())
+            matches!(actions.last(), Some(Action::SaveSession(s)) if s.note == "Slow burn." && s.direction == wild && s.memories.is_empty())
         );
     }
 

@@ -14,6 +14,7 @@ use std::rc::Rc;
 use crate::atlas::{NO_SHELF, Shelves};
 pub use crate::font::{FontId, Fonts};
 use crate::font::{Layer, is_cjk, is_emoji_joiner, is_invisible};
+use crate::raster::Bitmap;
 
 /// Side length of the square R8 glyph atlas texture. 2048 is the largest
 /// size every backend (including GLES) guarantees.
@@ -527,6 +528,8 @@ pub struct Upload {
 /// redrawn.
 pub struct GlyphAtlas {
     entries: HashMap<(FontId, u16, u32), AtlasEntry>,
+    /// Marks that are no font's glyphs (the logo), by their size.
+    marks: HashMap<u32, AtlasEntry>,
     /// Colour layers per glyph (`None`: not a colour glyph).
     layers: HashMap<(FontId, u16), Option<Rc<[Layer]>>>,
     shelves: Shelves,
@@ -536,7 +539,13 @@ pub struct GlyphAtlas {
 
 impl Default for GlyphAtlas {
     fn default() -> Self {
-        Self { entries: HashMap::new(), layers: HashMap::new(), shelves: Shelves::new(ATLAS_SIZE), uploads: Vec::new() }
+        Self {
+            entries: HashMap::new(),
+            marks: HashMap::new(),
+            layers: HashMap::new(),
+            shelves: Shelves::new(ATLAS_SIZE),
+            uploads: Vec::new(),
+        }
     }
 }
 
@@ -564,13 +573,34 @@ impl GlyphAtlas {
             self.shelves.touch(entry.shelf);
             return Some(*entry);
         }
+        let entry = self.store(fonts.face(font).rasterize(index, px))?;
+        self.entries.insert(key, entry);
+        Some(entry)
+    }
+
+    /// The atlas entry of the app's mark at `px` pixels a side, which
+    /// `draw` rasterises on first use. `None` means the atlas is full.
+    pub fn mark(&mut self, px: f32, draw: impl FnOnce() -> Option<Bitmap>) -> Option<AtlasEntry> {
+        if let Some(entry) = self.marks.get(&px.to_bits()) {
+            self.shelves.touch(entry.shelf);
+            return Some(*entry);
+        }
+        let entry = self.store(draw())?;
+        self.marks.insert(px.to_bits(), entry);
+        Some(entry)
+    }
+
+    /// Puts `bitmap` in the atlas; one without ink takes no room. `None`
+    /// means the atlas is full.
+    fn store(&mut self, bitmap: Option<Bitmap>) -> Option<AtlasEntry> {
         let mut entry = AtlasEntry { x: 0, y: 0, w: 0, h: 0, xmin: 0, ymin: 0, shelf: NO_SHELF };
-        if let Some(bitmap) = fonts.face(font).rasterize(index, px) {
+        if let Some(bitmap) = bitmap {
             let (w, h) = (bitmap.w, bitmap.h);
             // One texel of padding keeps linear filtering from bleeding.
             let slot = self.shelves.alloc(w + 1, h + 1)?;
             if let Some(shelf) = slot.evicted {
                 self.entries.retain(|_, e| e.shelf != shelf);
+                self.marks.retain(|_, e| e.shelf != shelf);
             }
             entry = AtlasEntry {
                 x: slot.x as u16,
@@ -584,7 +614,6 @@ impl GlyphAtlas {
             // The padding is uploaded too: an evicted glyph may have left ink there.
             self.uploads.push(Upload { x: slot.x, y: slot.y, w: w + 1, h: h + 1, data: pad(&bitmap.data, w, h, 1) });
         }
-        self.entries.insert(key, entry);
         Some(entry)
     }
 }

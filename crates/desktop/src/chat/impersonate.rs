@@ -93,6 +93,7 @@ impl Chat {
             // Declared, as the history calls them; none is called.
             tools: true,
             tool_choice: Some(ToolChoice::None),
+            temperature: None,
             cancel: Arc::clone(&cancel),
         };
         self.impersonation = Some(Impersonation {

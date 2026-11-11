@@ -22,6 +22,7 @@ mod image;
 mod library;
 mod log;
 mod login;
+mod logo;
 mod markdown;
 mod paint;
 mod platform;

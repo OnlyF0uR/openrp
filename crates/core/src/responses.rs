@@ -170,6 +170,9 @@ pub struct ResponseRequest<'a> {
     pub tools: &'a [ToolSpec<'a>],
     /// Whether and which tools the model must call; `None` lets it decide.
     pub tool_choice: Option<ToolChoice<'a>>,
+    /// Sampling temperature; `None` leaves it to the model. Claude's
+    /// Messages API never gets one: current models refuse it.
+    pub temperature: Option<f32>,
 }
 
 /// What a response must do with its tools.

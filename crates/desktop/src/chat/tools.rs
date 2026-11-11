@@ -66,6 +66,10 @@ pub fn tool_definitions() -> Vec<(&'static str, &'static str, Value)> {
             json!({
                 "type": "object",
                 "properties": {
+                    "plan": {
+                        "type": "string",
+                        "description": "Private, never shown, written first: in a line or two, what each character in the scene wants right now and what they will do about it, and what this reply changes in the story."
+                    },
                     "scene": {
                         "type": "string",
                         "description": "Where the characters are and what it is like there (place, time of day, mood, weather), e.g. \"Peeta's kitchen, before dawn; warm bread, rain on the windows\". Only when the scene is unset or changes this turn; empty otherwise."
@@ -101,7 +105,7 @@ pub fn tool_definitions() -> Vec<(&'static str, &'static str, Value)> {
                         "items": { "type": "string" }
                     }
                 },
-                "required": ["scene", "introduce", "messages"]
+                "required": ["plan", "scene", "introduce", "messages"]
             }),
         ),
         (
