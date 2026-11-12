@@ -348,7 +348,9 @@ pub fn is_invisible(c: char) -> bool {
 
 /// Every face the app can draw with.
 pub struct Fonts {
-    embedded: [Face; FontId::EMBEDDED],
+    /// [`FontId::EMBEDDED`] faces, on the heap: nine faces are about 16 KB,
+    /// too much to build on the stack.
+    embedded: Box<[Face]>,
     fallbacks: Vec<Fallback>,
     /// Resolution results for characters the requested face lacks.
     resolved: RefCell<HashMap<(FontId, char), (FontId, u16)>>,
@@ -362,21 +364,20 @@ impl Fonts {
     #[must_use]
     pub fn load() -> Self {
         let embedded = |bytes: &'static [u8]| Face::parse(bytes, 0).expect("embedded font is a valid OpenType file");
-        Self {
-            embedded: [
-                embedded(include_bytes!("../assets/Inter-Regular.ttf")),
-                embedded(include_bytes!("../assets/Inter-SemiBold.ttf")),
-                embedded(include_bytes!("../assets/Inter-Italic.ttf")),
-                embedded(include_bytes!("../assets/JetBrainsMono-Regular.ttf")),
-                embedded(include_bytes!("../assets/Twemoji.Mozilla.ttf")),
-                embedded(include_bytes!("../assets/Literata-Regular.ttf")),
-                embedded(include_bytes!("../assets/Literata-Italic.ttf")),
-                embedded(include_bytes!("../assets/Literata-SemiBold.ttf")),
-                embedded(include_bytes!("../assets/Lucide.ttf")),
-            ],
-            fallbacks: system_fallbacks(),
-            resolved: RefCell::default(),
-        }
+        let embedded: Box<[Face]> = vec![
+            embedded(include_bytes!("../assets/Inter-Regular.ttf")),
+            embedded(include_bytes!("../assets/Inter-SemiBold.ttf")),
+            embedded(include_bytes!("../assets/Inter-Italic.ttf")),
+            embedded(include_bytes!("../assets/JetBrainsMono-Regular.ttf")),
+            embedded(include_bytes!("../assets/Twemoji.Mozilla.ttf")),
+            embedded(include_bytes!("../assets/Literata-Regular.ttf")),
+            embedded(include_bytes!("../assets/Literata-Italic.ttf")),
+            embedded(include_bytes!("../assets/Literata-SemiBold.ttf")),
+            embedded(include_bytes!("../assets/Lucide.ttf")),
+        ]
+        .into_boxed_slice();
+        debug_assert_eq!(embedded.len(), FontId::EMBEDDED);
+        Self { embedded, fallbacks: system_fallbacks(), resolved: RefCell::default() }
     }
 
     /// The face behind `id`. Ids only come from [`Fonts::resolve`], so a
