@@ -187,13 +187,38 @@ pub fn review_tool() -> (&'static str, &'static str, Value) {
 }
 
 /// A user's message in a story as shown (Markdown): what they wrote, with
-/// an out-of-character instruction as a muted line under it.
+/// an out-of-character instruction as a muted line under it, in
+/// parentheses (the roleplay sign for it, and the OOC button's icon), so
+/// it never reads as one of their `*actions*`.
 #[must_use]
 pub fn user_display(text: &str) -> String {
+    let aside = |ooc: &str| {
+        let ooc = plain(ooc);
+        if ooc.starts_with('(') && ooc.ends_with(')') { format!("*{ooc}*") } else { format!("*({ooc})*") }
+    };
     match split_ooc(text) {
-        ("", Some(ooc)) => format!("*OOC: {}*", plain(ooc)),
-        (said, Some(ooc)) => format!("{said}\n\n*OOC: {}*", plain(ooc)),
+        ("", Some(ooc)) => aside(ooc),
+        (said, Some(ooc)) => format!("{said}\n\n{}", aside(ooc)),
         (said, None) => said.trim_end().to_owned(),
+    }
+}
+
+/// The message the composer sends for `text` whose out-of-character part
+/// starts at byte `from` (the OOC button): everything from there is the
+/// instruction, or the whole text when nothing follows `from`. Stored as
+/// [`split_ooc`] reads it.
+#[must_use]
+pub fn with_ooc(text: &str, from: Option<usize>) -> String {
+    let Some(from) = from else { return text.trim().to_owned() };
+    let (said, ooc) = text.split_at_checked(from).unwrap_or((text, ""));
+    let (said, ooc) = match (said.trim(), ooc.trim()) {
+        (said, "") => ("", said),
+        pair => pair,
+    };
+    match (said, ooc) {
+        (_, "") => said.to_owned(),
+        ("", ooc) => format!("/ooc {ooc}"),
+        (said, ooc) => format!("{said}\n/ooc {ooc}"),
     }
 }
 
@@ -916,6 +941,20 @@ fn close(text: &str) -> (String, Vec<usize>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_ooc_button_marks_the_rest_or_everything() {
+        assert_eq!(with_ooc(" I knock. ", None), "I knock.");
+        assert_eq!(with_ooc("I knock. make it tense", Some(8)), "I knock.\n/ooc make it tense");
+        assert_eq!(with_ooc("I knock. ", Some(9)), "/ooc I knock.", "nothing after it: all of it");
+        assert_eq!(with_ooc("skip ahead", Some(0)), "/ooc skip ahead");
+        assert_eq!(with_ooc("é", Some(1)), "/ooc é", "off a char boundary");
+        assert_eq!(with_ooc("  ", Some(1)), "");
+        for (text, from) in [("I knock.\nmake it\ntense", 9), ("a", 0)] {
+            let sent = with_ooc(text, Some(from));
+            assert_eq!(split_ooc(&sent).1, Some(text[from..].trim()), "{sent:?} reads back");
+        }
+    }
 
     fn call(name: &str, arguments: &Value) -> ToolCall {
         ToolCall { call_id: "c".into(), name: name.into(), arguments: arguments.to_string() }

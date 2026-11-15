@@ -13,7 +13,7 @@ use winit::event::KeyEvent;
 use winit::keyboard::{Key, ModifiersState, NamedKey};
 use winit::window::CursorIcon;
 
-use super::{Chat, Load, Menu, names, tools};
+use super::{Chat, Load, Menu, Reasoning, model_name, names, tools, usable};
 use crate::app::Action;
 use crate::color::{ColorPicker, Pick, color_button};
 use crate::form::{FIELD_PAD, Fields};
@@ -21,7 +21,7 @@ use crate::library::{Kind, Record, name_editor, portrait, text_editor};
 use crate::paint::{Painter, Rect, fade, mix};
 use crate::text::Style;
 use crate::theme;
-use crate::ui::{ButtonStyle, Ui, button, id, segmented};
+use crate::ui::{ButtonStyle, Ui, button, icon, id, segmented};
 
 /// The form's fields. Generating uses only the first, for the idea.
 const NAME: usize = 0;
@@ -59,8 +59,8 @@ enum Kept {
     Yes,
 }
 
-/// Height of the creativity and length choices in the direction form.
-const DIRECTION_H: f32 = 8.0 + 2.0 * DIRECTION_ROW;
+/// Height of the model, creativity and length choices in the direction form.
+const DIRECTION_H: f32 = 8.0 + 3.0 * DIRECTION_ROW;
 /// Height of one of those choices: its label, the control and the space after.
 const DIRECTION_ROW: f32 = 22.0 + 32.0 + 20.0;
 
@@ -100,6 +100,57 @@ fn direction_choices(
         chosen = Some(Direction { length: length[i], ..chosen.unwrap_or(now) });
     }
     chosen
+}
+
+/// The direction form's model and thinking buttons at `(x, y)`, `width`
+/// wide, under their labels. Returns the menu one of them opens, and where.
+fn model_choices(
+    p: &mut Painter,
+    ui: &mut Ui,
+    (x, y, width): (f32, f32, f32),
+    (model, effort): (&str, &str),
+    open: Option<Menu>,
+) -> Option<(Menu, Rect)> {
+    let t = p.theme;
+    let effort_w = 168.0;
+    let model_rect = Rect::new(x, y + 22.0, width - effort_w - 8.0, 32.0);
+    let effort_rect = Rect::new(model_rect.right() + 8.0, y + 22.0, effort_w, 32.0);
+    p.label("Model", theme::LABEL, x, y, t.text);
+    p.label("Thinking", theme::LABEL, effort_rect.x, y, t.text);
+    let mut opened = None;
+    if dropdown(p, ui, model_rect, (None, model), open == Some(Menu::Model)) {
+        opened = Some((Menu::Model, model_rect));
+    }
+    if dropdown(p, ui, effort_rect, (Some(icon::BRAIN), effort), open == Some(Menu::Reasoning)) {
+        opened = Some((Menu::Reasoning, effort_rect));
+    }
+    opened
+}
+
+/// A field-like button showing `label` (after `glyph`, if any) and a
+/// chevron, that opens a menu (`open` while it shows). Returns whether it
+/// was clicked.
+fn dropdown(p: &mut Painter, ui: &mut Ui, rect: Rect, (glyph, label): (Option<char>, &str), open: bool) -> bool {
+    let t = p.theme;
+    let hovered = ui.hovered(rect);
+    let hover = ui.anim(id(("dropdown", rect.x.to_bits(), rect.y.to_bits())), f32::from(u8::from(hovered || open)));
+    p.bordered(rect, mix(t.surface, t.hover, hover), theme::RADIUS_SM, 1.0, t.border_strong);
+    let mid = rect.y + rect.h * 0.5;
+    let lead = match glyph {
+        Some(glyph) => {
+            icon::draw(p, glyph, (rect.x + 19.0, mid), 15.0, t.text_muted);
+            34.0
+        }
+        None => 12.0,
+    };
+    let mut text = p.layout(label, theme::LABEL, None);
+    text.truncate(p.fonts, rect.w - lead - 34.0);
+    p.text(&text, rect.x + lead, mid - text.height() * 0.5, t.text);
+    icon::draw(p, icon::CHEVRON_DOWN, (rect.right() - 17.0, mid), 14.0, t.text_muted);
+    if hovered {
+        ui.cursor = CursorIcon::Pointer;
+    }
+    hovered && ui.clicked(rect)
 }
 
 /// Who the form describes.
@@ -171,6 +222,8 @@ pub(super) struct CharacterForm {
     pub picking: bool,
     /// Why the last portrait could not be used.
     pick_error: Option<String>,
+    /// The direction form's model and effort, as picked so far.
+    story_model: Option<(String, Reasoning)>,
 }
 
 impl CharacterForm {
@@ -207,6 +260,7 @@ impl CharacterForm {
             picker: None,
             picking: false,
             pick_error: None,
+            story_model: None,
         }
     }
 
@@ -355,7 +409,23 @@ impl Chat {
     /// Opens the form directing the story: creativity, length and a note.
     pub(super) fn edit_direction(&mut self) {
         let (note, direction) = (self.current().note.clone(), self.current().direction);
+        let (model, reasoning) = self.story_model(self.current);
+        let picked = (model.to_owned(), reasoning);
         self.open_form(Subject::Direction(direction), &note, "");
+        if let Some(form) = &mut self.character_form {
+            form.story_model = Some(picked);
+        }
+    }
+
+    /// The model and effort the open direction form has picked.
+    pub(super) fn direction_model(&self) -> Option<(&str, Reasoning)> {
+        let form = self.character_form.as_ref().filter(|f| f.conversation == self.current)?;
+        form.story_model.as_ref().map(|(model, reasoning)| (model.as_str(), *reasoning))
+    }
+
+    /// The open direction form's model and effort, to pick another.
+    pub(super) fn direction_pick(&mut self) -> Option<&mut (String, Reasoning)> {
+        self.character_form()?.story_model.as_mut()
     }
 
     /// Opens the story's memories: a field each, to change, remove or add to.
@@ -384,7 +454,7 @@ impl Chat {
 
     /// Applies the form, if it has a free name, and closes it; when
     /// generating, sends the request instead.
-    fn submit_form(&mut self, actions: &mut Vec<Action>) {
+    pub(super) fn submit_form(&mut self, actions: &mut Vec<Action>) {
         let Some(form) = self.character_form() else {
             return;
         };
@@ -402,6 +472,7 @@ impl Chat {
         let name = form.fields.text(NAME).trim().to_owned();
         let description = form.fields.text(DESCRIPTION).trim().to_owned();
         let (portrait, color) = (form.portrait.clone(), form.color.clone());
+        let story_model = form.story_model.clone();
         if let Subject::Generate { request, .. } = subject {
             if request.is_none() {
                 self.generate(name, actions);
@@ -415,6 +486,9 @@ impl Chat {
             return;
         }
         self.character_form = None;
+        if let (Subject::Direction(_), Some((model, reasoning))) = (&subject, story_model) {
+            self.set_story_model(model, reasoning, actions);
+        }
         let conversation = self.current();
         // Begin: the story opens with a greeting, if someone in it has one.
         let begins = subject == Subject::Player && conversation.player.is_none();
@@ -500,7 +574,7 @@ impl Chat {
         actions: &mut Vec<Action>,
     ) -> u64 {
         let request = self.next_id();
-        let (model, reasoning) = self.side_model();
+        let (model, reasoning) = self.side_model(self.current);
         actions.push(Action::GenerateCharacter(GenerateJob {
             conversation,
             request,
@@ -591,6 +665,11 @@ impl Chat {
         let t = p.theme;
         let world =
             self.current().world.clone().and_then(|id| self.library.get(Kind::World, &id).map(|w| w.name.clone()));
+        // The story's model and effort, as the direction form has them.
+        let story_model = self.direction_model().map(|(model, reasoning)| {
+            (model_name(&self.models, model).to_owned(), usable(&self.models, model, reasoning).label())
+        });
+        let open_menu = self.menu;
         let Some(form) = self.character_form() else {
             return;
         };
@@ -670,8 +749,8 @@ impl Chat {
             ),
             Subject::Direction(_) => (
                 "Direction".to_owned(),
-                "How the AI tells this story, in every reply. For one reply only, end a message with /ooc and your \
-                 instruction.",
+                "How the AI tells this story: which model, how much it thinks, how boldly and at what length. To \
+                 tell it something out of character, press OOC in the composer.",
                 "Save",
                 ["Note", ""],
                 ["e.g. Slow-burn and grounded; let me drive the plot. Tone, pacing, what to avoid…", ""],
@@ -826,8 +905,12 @@ impl Chat {
             form.fields.draw(NAME, p, ui, Rect::new(x + name_x, y, inner - name_x, name_h), layout, hints[0], true);
             y += name_h + 20.0;
         }
+        let mut model_menu = None;
         if let Subject::Direction(direction) = subject {
-            if let Some(chosen) = direction_choices(p, ui, (x, y + 8.0, inner), direction) {
+            if let Some((model, effort)) = &story_model {
+                model_menu = model_choices(p, ui, (x, y + 8.0, inner), (model, effort), open_menu);
+            }
+            if let Some(chosen) = direction_choices(p, ui, (x, y + 8.0 + DIRECTION_ROW, inner), direction) {
                 form.subject = Subject::Direction(chosen);
             }
             y += DIRECTION_H;
@@ -863,6 +946,9 @@ impl Chat {
         }
         if let Some(anchor) = open_more {
             self.open_library_menu(Menu::Personas, anchor);
+        }
+        if let Some((menu, anchor)) = model_menu {
+            self.open_library_menu(menu, anchor);
         }
         if keep {
             self.library.save_persona(&name, (&description, &photo, &color), actions);

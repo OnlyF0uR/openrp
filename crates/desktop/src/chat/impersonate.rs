@@ -74,7 +74,8 @@ impl Chat {
         let current = self.current;
         let draft = self.composer.text().trim().to_owned();
         let (instructions, state) = (self.instructions(current), self.state(current).unwrap_or_default());
-        let (stream, model, reasoning) = (self.next_id(), self.model.clone(), self.reasoning_key());
+        let stream = self.next_id();
+        let (model, reasoning) = self.request_model(current);
         let Some(conversation) = self.conversations.iter().find(|c| c.id == current) else { return };
         let Some(player) = conversation.player.as_ref().map(|p| p.name.clone()) else { return };
         let mut ask = IMPERSONATE.replace("{player}", &player);

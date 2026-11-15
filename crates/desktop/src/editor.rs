@@ -18,6 +18,8 @@ pub struct Editor {
     max_chars: Option<usize>,
     /// Only chars passing this filter are inserted.
     filter: Option<fn(char) -> bool>,
+    /// A position that moves with the text around it (see [`Editor::mark`]).
+    mark: Option<usize>,
 }
 
 impl Editor {
@@ -57,10 +59,29 @@ impl Editor {
         &self.text[self.selection()]
     }
 
-    /// Empties the editor and returns what it held.
+    /// The marked position, if any: it stays with the text around it as
+    /// the text changes, and text typed right at it lands after it.
+    #[must_use]
+    pub fn mark(&self) -> Option<usize> {
+        self.mark
+    }
+
+    /// Marks the position `at` (snapped to a char boundary), or clears the mark.
+    pub fn set_mark(&mut self, at: Option<usize>) {
+        self.mark = at.map(|mut at| {
+            at = at.min(self.text.len());
+            while !self.text.is_char_boundary(at) {
+                at -= 1;
+            }
+            at
+        });
+    }
+
+    /// Empties the editor (clearing the mark) and returns what it held.
     pub fn take(&mut self) -> String {
         self.cursor = 0;
         self.anchor = 0;
+        self.mark = None;
         std::mem::take(&mut self.text)
     }
 
@@ -76,6 +97,9 @@ impl Editor {
             .take(budget)
             .collect();
         self.text.insert_str(self.cursor, &filtered);
+        if let Some(mark) = self.mark.as_mut().filter(|mark| **mark > self.cursor) {
+            *mark += filtered.len();
+        }
         self.cursor += filtered.len();
         self.anchor = self.cursor;
     }
@@ -154,6 +178,9 @@ impl Editor {
     fn delete_selection(&mut self) {
         let range = self.selection();
         self.text.replace_range(range.clone(), "");
+        if let Some(mark) = self.mark.as_mut().filter(|mark| **mark > range.start) {
+            *mark = mark.saturating_sub(range.len()).max(range.start);
+        }
         self.cursor = range.start;
         self.anchor = range.start;
     }
@@ -303,6 +330,30 @@ mod tests {
         assert_eq!(e.text(), "123456");
         e.insert("9");
         assert_eq!(e.text(), "123456");
+    }
+
+    #[test]
+    fn the_mark_moves_with_the_text() {
+        let mut e = Editor::default();
+        e.insert("I knock.");
+        e.set_mark(Some(e.cursor()));
+        e.insert(" Make it tense");
+        assert_eq!(&e.text()[e.mark().unwrap_or_default()..], " Make it tense", "typed at the mark lands after it");
+        e.home(false);
+        e.insert("Loudly, ");
+        assert_eq!(&e.text()[e.mark().unwrap_or_default()..], " Make it tense", "typed before it moves it");
+        e.set_cursor(4, false);
+        e.set_cursor(20, true);
+        e.backspace(false);
+        assert_eq!(e.text(), "Loude it tense");
+        assert_eq!(e.mark(), Some(4), "a deleted mark sits where the deletion was");
+        e.end(false);
+        e.backspace(true);
+        assert_eq!(e.mark(), Some(4), "deleting after it leaves it");
+        e.set_mark(Some(99));
+        assert_eq!(e.mark(), Some(e.text().len()));
+        e.take();
+        assert_eq!(e.mark(), None);
     }
 
     #[test]

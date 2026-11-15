@@ -237,6 +237,17 @@ impl<'a> Painter<'a> {
         TextLayout::new(self.fonts, text, style, max_width, self.scale)
     }
 
+    /// Lays out `text` with styled `spans`, as [`TextLayout::rich`] does.
+    pub fn layout_rich(
+        &self,
+        text: &str,
+        spans: &[(std::ops::Range<usize>, crate::text::Run)],
+        style: Style,
+        max_width: Option<f32>,
+    ) -> TextLayout {
+        TextLayout::rich(self.fonts, text, spans, style, max_width, self.scale)
+    }
+
     /// Draws a laid-out block with its top-left at `(x, y)`.
     pub fn text(&mut self, layout: &TextLayout, x: f32, y: f32, color: Color) {
         self.text_aligned(layout, x, y, Align::Left, 0.0, color);

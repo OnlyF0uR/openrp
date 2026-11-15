@@ -21,7 +21,7 @@ use winit::event::KeyEvent;
 use winit::keyboard::{Key, ModifiersState, NamedKey};
 use winit::window::CursorIcon;
 
-use super::{Chat, Menu, MenuItem, Page, Reasoning, group_digits, price};
+use super::{Chat, Menu, MenuItem, Page, Reasoning, group_digits, price, usable};
 use crate::app::Action;
 use crate::library::{FormAction, Kind, portrait};
 use crate::paint::{Painter, Rect, fade, mix};
@@ -108,10 +108,10 @@ fn search(items: &[MenuItem], query: &str) -> Vec<usize> {
 }
 
 impl Chat {
-    /// What `menu` shows now; `anchors` holds the model and reasoning
-    /// buttons, the composer card and the cast strip's add button or open
-    /// member's dots.
-    fn menu_content(&mut self, menu: Menu, anchors: [Rect; 4]) -> Content {
+    /// What `menu` shows now; `anchors` holds the composer card and the
+    /// cast strip's add button or open member's dots. The model and effort
+    /// menus open from the Direction form's buttons, at `menu_anchor`.
+    fn menu_content(&mut self, menu: Menu, anchors: [Rect; 2]) -> Content {
         let content = |anchor, width, below, header: (&str, &str), items| Content {
             anchor,
             width,
@@ -129,40 +129,42 @@ impl Chat {
         let typed = self.typed_model().map(|id| MenuItem::new(&format!("Use “{id}”"), "Typed model"));
         match menu {
             Menu::Model => {
+                let picked = self.direction_model().map(|(model, _)| model.to_owned());
                 let items = self
                     .models
                     .iter()
                     .map(|m| MenuItem {
-                        selected: m.id == self.model,
+                        selected: picked.as_deref() == Some(m.id.as_str()),
                         search: m.id.clone(),
                         ..MenuItem::new(model_label(m), &price(m))
                     })
                     .chain(typed)
                     .collect();
-                let mut content =
-                    content(anchors[0], 360.0, false, (&models(self.models.len()), "Input / output per 1M"), items);
+                let header = (models(self.models.len()), "Input / output per 1M");
+                let mut content = content(self.menu_anchor, 360.0, true, (&header.0, header.1), items);
                 if let Some(error) = &self.models_error {
                     content.empty = format!("{error} Trying again soon.");
                 }
                 content
             }
             Menu::Reasoning => {
-                let in_use = self.reasoning_in_use();
-                let items = Reasoning::choices(self.selected_model())
+                let (model, chosen) = self.direction_model().unwrap_or_else(|| self.story_model(self.current));
+                let in_use = usable(&self.models, model, chosen);
+                let items = Reasoning::choices(self.models.iter().find(|m| m.id == model))
                     .into_iter()
                     .map(|r| MenuItem { selected: r == in_use, ..MenuItem::new(r.label(), r.detail()) })
                     .collect();
-                content(anchors[1], 280.0, false, ("Reasoning effort", ""), items)
+                content(self.menu_anchor, 280.0, true, ("Thinking", ""), items)
             }
             Menu::Commands => {
                 let items =
                     self.commands().into_iter().map(|c| MenuItem::new(&format!("/{}", c.name()), c.detail())).collect();
-                content(anchors[2], 320.0, false, ("Commands", "Tab to complete"), items)
+                content(anchors[0], 320.0, false, ("Commands", "Tab to complete"), items)
             }
             Menu::CastLibrary => {
                 let items = self.library_menu();
                 let placeholder = format!("Search {} characters", group_digits(items.len() as u64));
-                let mut content = content(anchors[3], PICKER_W, true, (&placeholder, ""), items);
+                let mut content = content(anchors[1], PICKER_W, true, (&placeholder, ""), items);
                 "Add to the cast".clone_into(&mut content.title);
                 "Each character you pick joins the scene at once; pick as many as you like."
                     .clone_into(&mut content.blurb);
@@ -179,7 +181,7 @@ impl Chat {
             Menu::Member(index) => {
                 let title = self.current().cast.get(index).map(|m| m.name.clone()).unwrap_or_default();
                 let items = self.member_menu(index);
-                content(anchors[3], 260.0, true, (&title, ""), items)
+                content(anchors[1], 260.0, true, (&title, ""), items)
             }
             Menu::Session(_) => {
                 let items = vec![
@@ -259,7 +261,7 @@ impl Chat {
         &mut self,
         p: &mut Painter,
         ui: &mut Ui,
-        anchors: [Rect; 4],
+        anchors: [Rect; 2],
         actions: &mut Vec<Action>,
     ) {
         let Some(menu) = self.menu else {
@@ -323,14 +325,14 @@ impl Chat {
             }
             Key::Named(NamedKey::Escape) => self.close_menu(),
             Key::Named(NamedKey::Enter) => {
-                let content = self.menu_content(menu, [Rect::default(); 4]);
+                let content = self.menu_content(menu, [Rect::default(); 2]);
                 let rows = search(&content.items, self.menu_query.text());
                 if let Some(&index) = rows.get(self.menu_pick) {
                     self.choose(menu, index, actions);
                 }
             }
             Key::Named(key @ (NamedKey::ArrowUp | NamedKey::ArrowDown)) => {
-                let content = self.menu_content(menu, [Rect::default(); 4]);
+                let content = self.menu_content(menu, [Rect::default(); 2]);
                 let count = search(&content.items, self.menu_query.text()).len();
                 if count > 0 {
                     let step = if *key == NamedKey::ArrowUp { count - 1 } else { 1 };
@@ -364,16 +366,18 @@ impl Chat {
     fn choose(&mut self, menu: Menu, index: usize, actions: &mut Vec<Action>) {
         self.menu = None;
         match menu {
+            // The Direction form keeps them until it is saved.
             Menu::Model => {
-                if let Some(model) = self.models.get(index).map(|m| m.id.clone()).or_else(|| self.typed_model()) {
-                    actions.push(Action::SelectModel(model.clone()));
-                    self.model = model;
+                let model = self.models.get(index).map(|m| m.id.clone()).or_else(|| self.typed_model());
+                if let (Some(model), Some(picked)) = (model, self.direction_pick()) {
+                    picked.0 = model;
                 }
             }
             Menu::Reasoning => {
-                if let Some(choice) = Reasoning::choices(self.selected_model()).get(index) {
-                    self.reasoning = *choice;
-                    actions.push(Action::SetReasoning(self.reasoning));
+                let model = self.direction_model().map(|(model, _)| model.to_owned()).unwrap_or_default();
+                let choice = Reasoning::choices(self.models.iter().find(|m| m.id == model)).get(index).copied();
+                if let (Some(choice), Some(picked)) = (choice, self.direction_pick()) {
+                    picked.1 = choice;
                 }
             }
             Menu::Commands => {
@@ -752,15 +756,19 @@ mod tests {
     #[test]
     fn a_model_can_be_typed_when_none_is_listed() {
         let mut chat = Chat::new(None, Reasoning::Auto, Vec::new());
+        chat.edit_direction();
         chat.menu = Some(Menu::Model);
         chat.menu_query.insert(" inworld-llm ");
-        let content = chat.menu_content(Menu::Model, [Rect::default(); 4]);
+        let content = chat.menu_content(Menu::Model, [Rect::default(); 2]);
         let rows = search(&content.items, chat.menu_query.text());
         assert_eq!(rows.len(), 1, "the typed name is offered");
         let mut actions = Vec::new();
         chat.choose(Menu::Model, rows[0], &mut actions);
-        assert_eq!(chat.model, "inworld-llm");
-        assert!(matches!(actions.as_slice(), [Action::SelectModel(m)] if m == "inworld-llm"));
+        assert_eq!(chat.direction_model(), Some(("inworld-llm", Reasoning::Auto)), "picked in the form");
+        assert!(actions.is_empty(), "nothing is saved before the form is");
+        chat.submit_form(&mut actions);
+        assert_eq!(chat.request_model(chat.current), ("inworld-llm".to_owned(), None));
+        assert!(matches!(actions.as_slice(), [Action::SelectModel(m)] if m == "inworld-llm"), "the latest pick");
     }
 
     #[test]
@@ -778,7 +786,7 @@ mod tests {
         chat.library_loaded(Vec::new(), Vec::new(), personas, openrp_core::Portraits::at("p".into()));
         chat.play("w".into());
         chat.sync_character_form();
-        let content = chat.menu_content(Menu::Personas, [Rect::default(); 4]);
+        let content = chat.menu_content(Menu::Personas, [Rect::default(); 2]);
         let shown: Vec<(&str, &str, bool)> =
             content.items.iter().map(|i| (i.detail.as_str(), i.summary.as_str(), i.selected)).collect();
         assert_eq!(
@@ -813,7 +821,7 @@ mod tests {
         chat.current().player = Some(openrp_core::Player { name: "Gale".into(), ..Default::default() });
         chat.menu = Some(Menu::CastLibrary);
         chat.menu_query.insert("mira DARKER");
-        let content = chat.menu_content(Menu::CastLibrary, [Rect::default(); 4]);
+        let content = chat.menu_content(Menu::CastLibrary, [Rect::default(); 2]);
         let rows = search(&content.items, chat.menu_query.text());
         assert_eq!(rows.len(), 1);
         assert_eq!(content.items[rows[0]].detail, "barkeep v2, darker", "the comment tells the two apart");

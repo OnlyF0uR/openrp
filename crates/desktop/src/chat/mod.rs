@@ -147,6 +147,13 @@ impl Reasoning {
     }
 }
 
+/// `reasoning` if `model` takes it (or the list does not say), else the
+/// model's default.
+fn usable(models: &[Model], model: &str, reasoning: Reasoning) -> Reasoning {
+    let listed = models.iter().find(|m| m.id == model);
+    if Reasoning::choices(listed).contains(&reasoning) { reasoning } else { Reasoning::Auto }
+}
+
 /// How replies show the model's reasoning.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ReasoningView {
@@ -382,6 +389,11 @@ struct Conversation {
     note: String,
     /// How boldly and at what length the story is told.
     direction: Direction,
+    /// The model the story is told with; empty until it begins (or for a
+    /// story from before stories kept one): the app's latest pick serves.
+    model: String,
+    /// The reasoning effort asked of `model`.
+    reasoning: Reasoning,
     /// How many prompts (and their replies) the memory reviews have read.
     reviewed: usize,
     /// The memory review being waited for.
@@ -420,6 +432,8 @@ impl Conversation {
             memories: Vec::new(),
             note: String::new(),
             direction: Direction::default(),
+            model: String::new(),
+            reasoning: Reasoning::Auto,
             reviewed: 0,
             reviewing: None,
             auto_rounds: 0,
@@ -471,6 +485,8 @@ impl Conversation {
             memories: self.memories.clone(),
             note: self.note.clone(),
             direction: self.direction,
+            model: self.model.clone(),
+            effort: if self.model.is_empty() { String::new() } else { self.reasoning.key().to_owned() },
             reviewed: self.reviewed,
             messages: self
                 .entries
@@ -729,47 +745,64 @@ impl Chat {
         chat
     }
 
-    /// The selected model, once the model list has loaded.
-    fn selected_model(&self) -> Option<&Model> {
-        self.models.iter().find(|m| m.id == self.model)
+    /// Whether the provider offers `model` (or lists none to tell).
+    fn offered(&self, model: &str) -> bool {
+        self.models.is_empty() || self.models.iter().any(|m| m.id == model)
     }
 
-    /// The effort requests use: the chosen one if the model accepts it.
-    fn reasoning_in_use(&self) -> Reasoning {
-        if Reasoning::choices(self.selected_model()).contains(&self.reasoning) {
-            self.reasoning
-        } else {
-            Reasoning::Auto
-        }
+    /// The model story `id` is told with and the effort asked of it: its
+    /// own, or the latest pick for a story without one (or whose model the
+    /// provider no longer offers). An effort the model does not take is
+    /// its default.
+    fn story_model(&self, id: u64) -> (&str, Reasoning) {
+        let (model, reasoning) = self
+            .conversations
+            .iter()
+            .find(|c| c.id == id && !c.model.is_empty() && self.offered(&c.model))
+            .map_or((self.model.as_str(), self.reasoning), |c| (c.model.as_str(), c.reasoning));
+        (model, usable(&self.models, model, reasoning))
     }
 
-    /// The effort to send with a story request, `None` for the model's default.
-    fn reasoning_key(&self) -> Option<&'static str> {
-        Some(self.reasoning_in_use()).filter(|r| *r != Reasoning::Auto).map(Reasoning::key)
+    /// The model and effort a request of story `id` names, `None` for the
+    /// model's default effort.
+    fn request_model(&self, id: u64) -> (String, Option<&'static str>) {
+        let (model, reasoning) = self.story_model(id);
+        (model.to_owned(), Some(reasoning).filter(|r| *r != Reasoning::Auto).map(Reasoning::key))
     }
 
-    /// The model (and effort) for work beside the story: memory reviews and
-    /// character generation. The background model, when one is set and
+    /// The model (and effort) for work beside story `id`: memory reviews
+    /// and character generation. The background model, when one is set and
     /// still offered, at its default effort; the story's otherwise.
-    fn side_model(&self) -> (String, Option<&'static str>) {
-        let offered = |id: &str| self.models.is_empty() || self.models.iter().any(|m| m.id == id);
-        match self.utility_model.as_deref().filter(|id| offered(id)) {
-            Some(id) => (id.to_owned(), None),
-            None => (self.model.clone(), self.reasoning_key()),
+    fn side_model(&self, id: u64) -> (String, Option<&'static str>) {
+        match self.utility_model.as_deref().filter(|model| self.offered(model)) {
+            Some(model) => (model.to_owned(), None),
+            None => self.request_model(id),
         }
     }
 
-    /// The model (and effort) that summarises a story: the background one
-    /// only if its context window is as large as the story model's, since
-    /// it reads what no longer fits that.
-    fn summary_model(&self) -> (String, Option<&'static str>) {
-        let (model, reasoning) = self.side_model();
+    /// The model (and effort) that summarises story `id`: the background
+    /// one only if its context window is as large as the story model's,
+    /// since it reads what no longer fits that.
+    fn summary_model(&self, id: u64) -> (String, Option<&'static str>) {
+        let (model, reasoning) = self.side_model(id);
+        let story = self.request_model(id);
         let window = |id: &str| self.models.iter().find(|m| m.id == id).map_or(0, |m| m.context_window);
-        if model != self.model && window(&model) < window(&self.model) {
-            (self.model.clone(), self.reasoning_key())
-        } else {
-            (model, reasoning)
+        if model != story.0 && window(&model) < window(&story.0) { story } else { (model, reasoning) }
+    }
+
+    /// Tells the open story with `model` at `reasoning`, which become the
+    /// latest pick: what stories without a model of their own use.
+    fn set_story_model(&mut self, model: String, reasoning: Reasoning, actions: &mut Vec<Action>) {
+        if model != self.model {
+            self.model.clone_from(&model);
+            actions.push(Action::SelectModel(model.clone()));
         }
+        if reasoning != self.reasoning {
+            self.reasoning = reasoning;
+            actions.push(Action::SetReasoning(reasoning));
+        }
+        let conversation = self.current();
+        (conversation.model, conversation.reasoning) = (model, reasoning);
     }
 
     /// Sets the model for work beside the story; `None` uses the story's.
@@ -926,8 +959,6 @@ impl Chat {
         let current = self.current;
         match command {
             Command::Clear => self.clear(actions),
-            // The instruction is typed after it, then sent with the message.
-            Command::Ooc => self.composer.insert("/ooc "),
             Command::Note => self.edit_direction(),
             Command::Memory => self.edit_memories(),
             Command::Memorize => self.review_memories(current, true, actions),
@@ -1019,12 +1050,14 @@ impl Chat {
         let (id, world, cast, player) =
             (conversation.id, conversation.world.clone(), conversation.cast.clone(), conversation.player.clone());
         let (note, direction) = (conversation.note.clone(), conversation.direction);
+        let (model, reasoning) = (conversation.model.clone(), conversation.reasoning);
         self.delete_conversation(id, actions);
         let fresh = self.current();
         fresh.world = world;
         fresh.cast = cast;
         fresh.player = player;
         (fresh.note, fresh.direction) = (note, direction);
+        (fresh.model, fresh.reasoning) = (model, reasoning);
         // The story begins again at once, so it is saved and listed again.
         if !fresh.is_fresh() {
             actions.push(Action::SaveSession(fresh.to_session()));
@@ -1070,6 +1103,8 @@ impl Chat {
         conversation.memories = session.memories;
         conversation.note = session.note;
         conversation.direction = session.direction;
+        conversation.reasoning = Reasoning::from_key(Some(&session.effort));
+        conversation.model = session.model;
         conversation.reviewed = session.reviewed;
         conversation.load = Load::Loaded;
         match self.pending.take_if(|(id, _)| *id == conversation_id) {
@@ -1143,11 +1178,21 @@ impl Chat {
         }
         // What is sent is what the composer holds now.
         self.stop_impersonating();
-        let text = self.composer.take().trim().to_owned();
+        let ooc = self.composer.mark();
+        let text = tools::with_ooc(&self.composer.take(), ooc);
+        let latest = (self.model.clone(), self.reasoning);
+        // OOC stays on, for all of the next message, until it is pressed off.
+        if ooc.is_some() {
+            self.composer.set_mark(Some(0));
+        }
         let user_id = self.next_id();
         let conversation = self.current();
         conversation.auto_rounds = 0;
         conversation.repairing = false;
+        // A story keeps the model it began with until its direction changes it.
+        if conversation.model.is_empty() {
+            (conversation.model, conversation.reasoning) = latest;
+        }
         if conversation.title.is_empty() {
             // Named by what is said, not by an out-of-character instruction.
             let said = match tools::split_ooc(&text) {
@@ -1364,8 +1409,12 @@ impl Chat {
                 }
             }
             Pick::Model(model) => {
-                self.model.clone_from(&model);
-                actions.push(Action::SelectModel(model));
+                let reasoning = self.story_model(self.current).1;
+                self.set_story_model(model, reasoning, actions);
+                let conversation = self.current();
+                if !conversation.is_fresh() && conversation.load == Load::Loaded {
+                    actions.push(Action::SaveSession(conversation.to_session()));
+                }
             }
         }
     }
@@ -1526,7 +1575,7 @@ impl Chat {
                     Some(LibraryEvent::Generate(idea)) => self.generate_for_library(idea, actions),
                     None => {}
                 }
-                [Rect::default(); 4]
+                [Rect::default(); 2]
             }
             Page::Chat => {
                 self.sync_character_form();
@@ -1547,18 +1596,18 @@ impl Chat {
                 }
                 let stage = main;
                 let top = main.y + theme::HEADER_HEIGHT;
-                let toolbar = if self.current().needs_player() {
+                let card = if self.current().needs_player() {
                     self.draw_character_form(p, ui, Rect::new(stage.x, top, stage.w, stage.h - top), actions);
-                    [Rect::default(); 3]
+                    Rect::default()
                 } else {
-                    let (composer_top, toolbar) = if self.current().playable() {
+                    let (composer_top, card) = if self.current().playable() {
                         self.draw_composer(p, ui, stage, actions)
                     } else {
-                        (stage.bottom(), [Rect::default(); 3])
+                        (stage.bottom(), Rect::default())
                     };
                     let messages = Rect::new(stage.x, top, stage.w, composer_top - top - 12.0);
                     self.draw_messages(p, ui, messages, actions);
-                    toolbar
+                    card
                 };
                 ui.blocker = if editing && !modal { Some(main) } else { covered };
                 let member_menu = panel.map(|panel| self.draw_cast_panel(p, ui, panel, actions)).unwrap_or_default();
@@ -1566,8 +1615,7 @@ impl Chat {
                     ui.blocker = covered;
                     self.draw_character_form(p, ui, main, actions);
                 }
-                let [model_button, reasoning_button, card] = toolbar;
-                [model_button, reasoning_button, card, member_menu]
+                [card, member_menu]
             }
         };
         frame(p, main);
@@ -1953,11 +2001,17 @@ mod tests {
         assert_eq!(Reasoning::choices(None).len(), Reasoning::ALL.len());
 
         let mut chat = Chat::new(Some("m".into()), Reasoning::Off, Vec::new());
-        assert_eq!(chat.reasoning_in_use(), Reasoning::Off, "unknown models keep the choice");
+        let id = chat.current;
+        assert_eq!(chat.story_model(id).1, Reasoning::Off, "unknown models keep the choice");
         chat.set_models(vec![claude]);
-        assert_eq!(chat.reasoning_in_use(), Reasoning::Auto, "Off is not a level this model accepts");
+        assert_eq!(chat.story_model(id).1, Reasoning::Auto, "Off is not a level this model accepts");
         chat.reasoning = Reasoning::Max;
-        assert_eq!(chat.reasoning_in_use(), Reasoning::Max);
+        assert_eq!(chat.story_model(id).1, Reasoning::Max);
+        // A story's own model and effort win, while the provider offers it.
+        (chat.current().model, chat.current().reasoning) = ("m".into(), Reasoning::Low);
+        assert_eq!(chat.story_model(id), ("m", Reasoning::Low));
+        chat.current().model = "gone".into();
+        assert_eq!(chat.story_model(id), ("m", Reasoning::Max), "one no longer offered: the latest pick");
     }
 
     #[test]
@@ -2060,6 +2114,8 @@ mod tests {
             memories: vec!["A fact.".into()],
             note: "Keep it light.".into(),
             direction: Direction::default(),
+            model: "m1".into(),
+            effort: "high".into(),
             reviewed: 0,
             messages: vec![StoredMessage::new(Role::User, "hi".into()), reply],
         };
@@ -2071,6 +2127,7 @@ mod tests {
         assert_eq!((totals.sessions, totals.tokens), (1, 7));
 
         let id = chat.conversations.iter().find(|c| c.session_id == "abc").map(|c| c.id).unwrap();
+        assert_eq!(chat.story_model(id), (DEFAULT_MODEL, Reasoning::Auto), "the latest pick until it is read");
         let mut actions = Vec::new();
         chat.open(id, &mut actions);
         assert!(matches!(&actions[..], [Action::LoadSession { session, .. }] if session == "abc"));
@@ -2083,8 +2140,39 @@ mod tests {
 
         chat.session_loaded(id, Ok(session.clone()), &mut Vec::new());
         assert_eq!(chat.current().to_session(), session);
+        assert_eq!(chat.request_model(id), ("m1".to_owned(), Some("high")), "a story keeps its own model");
         chat.send(&mut actions);
         assert!(matches!(&actions[..], [Action::SaveSession(saved), Action::Send(_)] if saved.messages.len() == 3));
+    }
+
+    #[test]
+    fn ooc_stays_on_after_sending() {
+        let mut chat = new_chat();
+        chat.composer.insert("I knock.");
+        chat.composer.set_mark(Some(chat.composer.cursor()));
+        start(&mut chat, " Make it tense.");
+        let entries = &chat.current().entries;
+        let sent = entries.iter().rev().find(|e| e.message.role == Role::User).map(|e| e.message.content.clone());
+        assert_eq!(sent.as_deref(), Some("I knock.\n/ooc Make it tense."));
+        assert_eq!(chat.composer.mark(), Some(0), "the next message is all out of character");
+
+        let mut chat = new_chat();
+        start(&mut chat, "I knock.");
+        assert_eq!(chat.composer.mark(), None, "off stays off");
+    }
+
+    #[test]
+    fn a_story_keeps_the_model_it_began_with() {
+        let mut chat = new_chat();
+        (chat.model, chat.reasoning) = ("a".into(), Reasoning::High);
+        let id = chat.current;
+        let job = start(&mut chat, "I knock.");
+        assert_eq!((job.model.as_str(), job.reasoning), ("a", Some("high")));
+        // Another story picks another model: this one stays as it was.
+        (chat.model, chat.reasoning) = ("b".into(), Reasoning::Auto);
+        assert_eq!(chat.request_model(id), ("a".to_owned(), Some("high")));
+        let saved = chat.current().to_session();
+        assert_eq!((saved.model.as_str(), saved.effort.as_str()), ("a", "high"));
     }
 
     fn new_chat() -> Chat {

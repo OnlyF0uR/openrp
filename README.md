@@ -12,7 +12,8 @@ cargo clippy --workspace --all-targets
 ## What it does
 
 - **Chat** with any model your provider offers, with per-reply token captions (and prices and
-  costs, for a provider that lists them). Reasoning effort is selectable. While a thinking model works, the reply
+  costs, for a provider that lists them). Each story keeps its own model and reasoning effort,
+  picked in its **Direction**. While a thinking model works, the reply
   shows "Thinking for 4s"; afterwards "Thought for 12s" expands to its reasoning. Settings
   choose whether reasoning is hidden, collapsed or expanded.
 - **Markdown replies**: headings, lists and task lists, quotes, tables, links, inline code, and
@@ -148,15 +149,22 @@ cargo clippy --workspace --all-targets
   must not forget (Memory shows "…" while it works; it is billed with the next reply). One that fails or takes over three minutes leaves its turns for the next review.
   `/memorize` runs it at once.
 - **Direction and OOC**: **Direction** in the cast panel (or `/note`) sets how the story is told:
+  its **Model** and **Thinking** (reasoning effort; an effort the model does not take is its
+  default), kept by the story: it takes the latest pick at its first prompt (a story from before
+  stories kept a model, at its next), and uses the latest pick while the provider no longer offers
+  its own. Then
   **Creativity** (Grounded, Balanced, Vivid, Wild) and **Length** (Short, Medium, Long), each sent
   as an instruction, and a note with your guidance for the whole story (tone, pacing, limits), all
   sent last in every request. Creativity also sets the sampling temperature on providers that take
   one (Grounded 0.6, Vivid 1.1, Wild 1.25; Balanced leaves the model's own); Claude's current
   models refuse a temperature, so there it works through the instruction alone, and so it does for
-  a model whose listed parameters leave temperature out. For one reply only, end a message with a
-  line starting `/ooc` (or send just `/ooc …` to nudge the story): the model is told it is your
-  instruction, not your character speaking, and it shows muted under your message. Your own
-  `*actions*` are muted too, like the characters'.
+  a model whose listed parameters leave temperature out. To speak out of character, press **OOC** in the
+  composer's toolbar (out of character): everything you type or dictate after the caret from then on
+  is your instruction, shown muted and italic; pressed when nothing follows it (before you start, or
+  after you finish), the whole message is. The model is told it is your instruction, not your
+  character speaking, and it shows muted, in italics and parentheses, under your message. OOC stays on after you send
+  (the next message is all out of character, so dictating and pressing send is enough) until you
+  press it again. Your own `*actions*` are muted too, like the characters'.
 - **Write for me**: in the composer's toolbar (or `/impersonate`), the AI writes your
   character's next message, streaming it into the composer to edit and send, or not. What you
   typed first is its starting point. Clicking again or Esc stops it. It reads the story as a
@@ -168,7 +176,7 @@ cargo clippy --workspace --all-targets
   **Export as JSONL** a SillyTavern chat, one line per character's message, which SillyTavern
   imports. A notice then offers the folder it went to.
 - **Slash commands** in the composer, completed as you type (Tab completes, Enter runs, Esc
-  dismisses): `/ooc`, `/impersonate`, `/note`, `/memory`, `/memorize`, `/duplicate`, `/frame`, and
+  dismisses): `/impersonate`, `/note`, `/memory`, `/memorize`, `/duplicate`, `/frame`, and
   `/clear`, which deletes the open story and starts it over in the same world, cast and note.
 - **Emoji and CJK**: colour emoji (Twemoji), and Chinese, Japanese and Korean text through the
   operating system's fonts, with input-method (IME) support for typing them.
@@ -279,10 +287,10 @@ all three for the current user). The packaging files are in `packaging/`.
 The first time the app starts, it asks for the provider's base URL and API key. Everything
 lives in `~/.openrp/`:
 
-- `config.toml`: the provider's base URL and key, model, background model, reasoning effort and display, colour scheme, the window's
+- `config.toml`: the provider's base URL and key, the latest picked model and reasoning effort (for new stories), the background model, how reasoning shows, colour scheme, the window's
   size and the zoom. Lines a newer version added are kept as they are.
 - `sessions/<id>.json`: one file per story, with its world, your character, its cast (copies),
-  its scene, memories and direction (creativity, length, note), each reply's tool calls, and each reply's tokens and cost at the
+  its scene, memories, model and effort, and direction (creativity, length, note), each reply's tool calls, and each reply's tokens and cost at the
   prices of the time. `.index.json` next to them holds titles and totals, so startup reads
   only the index; a session's messages load when it is opened.
 - `worlds/<id>.json`, `characters/<id>.json` and `personas/<id>.json`: one file per world,

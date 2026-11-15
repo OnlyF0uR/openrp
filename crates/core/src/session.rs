@@ -118,6 +118,14 @@ pub struct Session {
     /// How boldly and at what length the story is told.
     #[serde(skip_serializing_if = "is_default")]
     pub direction: Direction,
+    /// The model the story is told with; empty for a story from before
+    /// stories kept one (the app's latest pick tells it).
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub model: String,
+    /// The reasoning effort asked of `model`, by its API name (`auto` for
+    /// the model's default); empty without a model.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub effort: String,
     /// How many of the story's prompts (and their replies) the memory
     /// reviews have read, so the next one covers only what came after.
     #[serde(skip_serializing_if = "is_default")]

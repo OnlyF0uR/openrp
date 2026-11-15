@@ -1,12 +1,22 @@
 //! The composer: the text field (with input-method preedit), the toolbar
-//! with model, reasoning, Write for me (the AI writes the user's message;
-//! see `impersonate.rs`) and send, and the slash commands it completes.
+//! with OOC, Write for me (the AI writes the user's message; see
+//! `impersonate.rs`) and send, and the slash commands it completes. The
+//! story's model and effort are picked in its Direction.
+//!
+//! OOC marks the rest of the message, from the caret, as an instruction to
+//! the AI rather than something the user's character says (the editor's
+//! mark keeps where it starts). When nothing follows the mark, all of the
+//! message is. The part that will go out of character shows muted. It stays
+//! on after sending (the next message is all out of character) until pressed
+//! off, so dictating and pressing send is enough.
 
 use winit::window::CursorIcon;
 
-use super::{Chat, Menu, model_name};
+use super::Chat;
 use crate::app::Action;
+use crate::font::FontId;
 use crate::paint::{Painter, Rect, fade, mix};
+use crate::text::Run;
 use crate::theme;
 use crate::ui::{Ui, icon, id};
 
@@ -18,8 +28,6 @@ const MAX_LINES: usize = 8;
 pub(super) enum Command {
     /// Deletes the open chat and starts over.
     Clear,
-    /// Starts an out-of-character instruction for the next reply.
-    Ooc,
     /// Opens the story's author's note.
     Note,
     /// Opens the story's memories.
@@ -35,22 +43,13 @@ pub(super) enum Command {
 }
 
 impl Command {
-    const ALL: [Self; 8] = [
-        Self::Ooc,
-        Self::Impersonate,
-        Self::Note,
-        Self::Memory,
-        Self::Memorize,
-        Self::Duplicate,
-        Self::Frame,
-        Self::Clear,
-    ];
+    const ALL: [Self; 7] =
+        [Self::Impersonate, Self::Note, Self::Memory, Self::Memorize, Self::Duplicate, Self::Frame, Self::Clear];
 
     /// What follows the slash.
     pub(super) fn name(self) -> &'static str {
         match self {
             Self::Clear => "clear",
-            Self::Ooc => "ooc",
             Self::Note => "note",
             Self::Memory => "memory",
             Self::Memorize => "memorize",
@@ -64,7 +63,6 @@ impl Command {
     pub(super) fn detail(self) -> &'static str {
         match self {
             Self::Clear => "Delete this story and start it over",
-            Self::Ooc => "Tell the AI something out of character",
             Self::Note => "Direction for the whole story: creativity, length and a note",
             Self::Memory => "What the story remembers",
             Self::Memorize => "Add the latest turns to the memories",
@@ -87,15 +85,15 @@ impl Command {
 }
 
 impl Chat {
-    /// Draws the composer. Returns its top edge and
-    /// the menu anchors: the toolbar's model and reasoning buttons, and the card.
+    /// Draws the composer. Returns its top edge and its card, which the
+    /// command menu opens over.
     pub(super) fn draw_composer(
         &mut self,
         p: &mut Painter,
         ui: &mut Ui,
         main: Rect,
         actions: &mut Vec<Action>,
-    ) -> (f32, [Rect; 3]) {
+    ) -> (f32, Rect) {
         let t = p.theme;
         let (x, width) = Self::column(main);
         let pad = 16.0;
@@ -113,7 +111,18 @@ impl Chat {
             }
             None => (self.composer.text().to_owned(), None),
         };
-        let layout = p.layout(&shown, theme::BODY, Some(text_w));
+        let ooc = self.composer.mark().map(|mark| {
+            // The input method's text shifts what follows the caret.
+            let mark = match &preedit {
+                Some(range) if mark > cursor => mark + range.len(),
+                _ => mark,
+            };
+            let rest = shown.get(mark..).unwrap_or_default();
+            if rest.trim().is_empty() { 0..shown.len() } else { mark..shown.len() }
+        });
+        let spans: Vec<_> =
+            ooc.iter().map(|range| (range.clone(), Run { ink: 1, ..Run::plain(FontId::ITALIC) })).collect();
+        let layout = p.layout_rich(&shown, &spans, theme::BODY, Some(text_w));
         let line_h = layout.line_height();
         let visible_h = layout.line_count().min(MAX_LINES) as f32 * line_h;
 
@@ -171,13 +180,17 @@ impl Chat {
                 p.rect(Rect::new(origin.0 + x0, origin.1 + y, x1 - x0, line_h), t.selection, 2.0);
             }
         }
-        if shown.is_empty() {
+        if shown.is_empty() && ooc.is_some() {
+            let invite = "Out of character: tell the AI what you want";
+            let invite = p.layout_rich(invite, &[(0..invite.len(), Run::plain(FontId::ITALIC))], theme::BODY, None);
+            p.text(&invite, origin.0, origin.1, t.text_faint);
+        } else if shown.is_empty() {
             let invite = if self.current().world.is_some() { "What do you do?" } else { "Message OpenRP" };
             let width = p.label(invite, theme::BODY, origin.0, origin.1, t.text_faint);
             let commands = p.layout("/ for commands", theme::BODY, None);
             p.text(&commands, origin.0 + width + 12.0, origin.1, fade(t.text_faint, 0.55));
         } else {
-            p.text(&layout, origin.0, origin.1, t.text);
+            p.rich(&layout, origin.0, origin.1, &[t.text, t.text_muted], t.hover);
         }
         // The input method's text is underlined until committed.
         if let Some(range) = &preedit {
@@ -194,26 +207,42 @@ impl Chat {
         }
         p.set_clip(clip);
 
-        // Toolbar: model and reasoning on the left; send/stop on the right.
+        // Toolbar: OOC on the left; Write for me and send/stop on the right.
         let item_y = card.bottom() - 10.0 - 30.0;
-        let name = model_name(&self.models, &self.model).to_owned();
-        let model = self.toolbar_button(p, ui, (card.x + 8.0, item_y), (None, &name), Menu::Model);
-        let effort = self.reasoning_in_use().label();
-        let reasoning =
-            self.toolbar_button(p, ui, (model.right() + 2.0, item_y), (Some(icon::BRAIN), effort), Menu::Reasoning);
-
         let busy = self.current().busy();
         let ready = !self.composer.text().trim().is_empty();
         let send = Rect::new(card.right() - 10.0 - 30.0, item_y, 30.0, 30.0);
+
+        // OOC: what follows the caret (or all of it) is for the AI.
+        let marked = self.composer.mark().is_some();
+        let text = p.layout("OOC", theme::SMALL, None);
+        let ooc_button = Rect::new(card.x + 8.0, item_y, text.width() + 40.0, 30.0);
+        {
+            let hovered = ui.hovered(ooc_button);
+            let hover = ui.anim(id("ooc"), f32::from(u8::from(hovered)));
+            let on = ui.anim(id("ooc-on"), f32::from(u8::from(marked)));
+            p.rect(ooc_button, mix(fade(t.hover, hover), fade(t.accent, 0.16 + 0.06 * hover), on), theme::RADIUS_SM);
+            let color = mix(mix(t.text_muted, t.text, hover), t.accent, on);
+            icon::draw(p, icon::PARENTHESES, (ooc_button.x + 18.0, item_y + 15.0), 15.0, color);
+            p.text(&text, ooc_button.x + 31.0, item_y + (30.0 - text.height()) * 0.5, color);
+            if hovered {
+                ui.cursor = CursorIcon::Pointer;
+                if ui.clicked(ooc_button) {
+                    let at = (!marked).then(|| self.composer.cursor());
+                    self.composer.set_mark(at);
+                    ui.last_edit = ui.time;
+                }
+            }
+        }
 
         // Write for me: the AI writes the user's message, from their draft.
         let writing = self.impersonating();
         if writing || self.can_impersonate() {
             let label = if writing { "Writing…" } else { "Write for me" };
             let text = p.layout(label, theme::SMALL, None);
-            let rect = Rect::new(send.x - 8.0 - text.width() - 42.0, item_y, text.width() + 42.0, 30.0);
+            let rect = Rect::new(send.x - 6.0 - text.width() - 42.0, item_y, text.width() + 42.0, 30.0);
             // Only where the toolbar has room for it.
-            if rect.x > reasoning.right() + 8.0 {
+            if rect.x > ooc_button.right() + 8.0 {
                 let hovered = ui.hovered(rect);
                 let hover = ui.anim(id("impersonate"), f32::from(u8::from(hovered)));
                 p.rect(rect, fade(t.hover, hover), theme::RADIUS_SM);
@@ -258,42 +287,7 @@ impl Chat {
         }
 
         self.composer_layout = if preedit.is_none() { Some((layout, origin)) } else { None };
-        (card.y, [model, reasoning, card])
-    }
-
-    /// A ghost button at `(x, y)`, an optional icon before its label and a
-    /// chevron after, that toggles `menu`. Returns its rect.
-    fn toolbar_button(
-        &mut self,
-        p: &mut Painter,
-        ui: &mut Ui,
-        (x, y): (f32, f32),
-        (glyph, label): (Option<char>, &str),
-        menu: Menu,
-    ) -> Rect {
-        let t = p.theme;
-        let text = p.layout(label, theme::SMALL, None);
-        let lead = if glyph.is_some() { 32.0 } else { 10.0 };
-        let rect = Rect::new(x, y, lead + text.width() + 28.0, 30.0);
-        let open = self.menu == Some(menu);
-        let hovered = ui.hovered(rect);
-        let hover = ui.anim(id(("toolbar", menu == Menu::Model)), f32::from(u8::from(hovered || open)));
-        p.rect(rect, fade(t.hover, hover), theme::RADIUS_SM);
-        let color = mix(t.text_muted, t.text, hover);
-        let mid = y + 15.0;
-        if let Some(glyph) = glyph {
-            icon::draw(p, glyph, (rect.x + 18.0, mid), 15.0, color);
-        }
-        p.text(&text, rect.x + lead, mid - text.height() * 0.5, color);
-        icon::draw(p, icon::CHEVRON_DOWN, (rect.right() - 15.0, mid), 14.0, fade(color, 0.8));
-        if hovered {
-            ui.cursor = CursorIcon::Pointer;
-            if ui.clicked(rect) {
-                self.menu = if open { None } else { Some(menu) };
-                self.menu_scroll = 0.0;
-            }
-        }
-        rect
+        (card.y, card)
     }
 }
 

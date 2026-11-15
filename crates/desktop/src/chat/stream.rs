@@ -642,15 +642,16 @@ impl Conversation {
 }
 
 impl Chat {
-    /// The selected model's context window (`0` when unknown).
-    fn context_window(&self) -> u64 {
-        self.selected_model().map_or(0, |m| m.context_window)
+    /// The context window of story `id`'s model (`0` when unknown).
+    fn context_window(&self, id: u64) -> u64 {
+        let model = self.story_model(id).0;
+        self.models.iter().find(|m| m.id == model).map_or(0, |m| m.context_window)
     }
 
     /// Sends conversation `id`'s next request: a reply, or first a summary
     /// when the conversation outgrew its context budget.
     pub(super) fn request_reply(&mut self, id: u64, actions: &mut Vec<Action>) {
-        let limit = compact_limit(self.context_window());
+        let limit = compact_limit(self.context_window(id));
         let Some(conversation) = self.find(id) else {
             return;
         };
@@ -665,7 +666,7 @@ impl Chat {
     /// longer than [`REVIEW_TIMEOUT`] leaves its turns for the next one.
     pub(super) fn review_memories(&mut self, id: u64, force: bool, actions: &mut Vec<Action>) {
         let request = self.next_id();
-        let (model, reasoning) = self.side_model();
+        let (model, reasoning) = self.side_model(id);
         let Some(conversation) = self.conversations.iter().find(|c| c.id == id) else {
             return;
         };
@@ -757,11 +758,10 @@ impl Chat {
         let (entry_id, stream_id) = (self.next_id(), self.next_id());
         // A summary is side work, for the background model if it can hold
         // as much as the story's.
-        let (model, reasoning) =
-            if compaction { self.summary_model() } else { (self.model.clone(), self.reasoning_key()) };
+        let (model, reasoning) = if compaction { self.summary_model(id) } else { self.request_model(id) };
         let instructions = self.instructions(id);
         let state = self.state(id);
-        let budget = keep_budget(compact_limit(self.context_window()));
+        let budget = keep_budget(compact_limit(self.context_window(id)));
         // The story's creativity, as a temperature the model takes; a summary keeps the model's own.
         let creativity = self.conversations.iter().find(|c| c.id == id).map(|c| c.direction.creativity);
         let takes = self.models.iter().find(|m| m.id == model).is_none_or(Model::takes_temperature);
@@ -1381,7 +1381,8 @@ mod tests {
         assert!(
             matches!(&items[0], InputItem::Message { text, .. } if text.ends_with("be brief") && text.contains(OOC))
         );
-        assert_eq!(tools::user_display("I *wave*.\n/ooc a *dark* turn"), "I *wave*.\n\n*OOC: a dark turn*");
+        assert_eq!(tools::user_display("I *wave*.\n/ooc a *dark* turn"), "I *wave*.\n\n*(a dark turn)*");
+        assert_eq!(tools::user_display("/ooc ((skip ahead))"), "*((skip ahead))*", "no brackets twice");
         assert_eq!(tools::split_ooc("/ooc"), ("", None));
     }
 

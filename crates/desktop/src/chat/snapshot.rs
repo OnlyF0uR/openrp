@@ -34,8 +34,11 @@ fn snapshots() {
         settings.settings_open = true;
         let mut worlds = story(&dir);
         worlds.page = Page::Library(Kind::World);
+        // The thinking menu, open from its button in the Direction form.
         let mut menu = story(&dir);
+        menu.edit_direction();
         menu.menu = Some(Menu::Reasoning);
+        menu.menu_anchor = Rect::new(788.0, 308.0, 168.0, 32.0);
         let mut picker = story(&dir);
         picker.menu = Some(Menu::CastLibrary);
         let mut spotlight = story(&dir);
@@ -48,6 +51,13 @@ fn snapshots() {
         let mut editor = crate::editor::Editor::default();
         editor.insert("The heron letter");
         rename.title_edit = Some((rename.current, editor));
+        let mut ooc = story(&dir);
+        if let Some(said) = ooc.current().entries.iter_mut().rev().find(|e| e.message.role == Role::User) {
+            said.message.content.push_str("\n/ooc Keep Mira guarded; she trusts no one yet.");
+        }
+        ooc.composer.insert("I slide the letter across the table.");
+        ooc.composer.set_mark(Some(ooc.composer.cursor()));
+        ooc.composer.insert(" Have Mira notice the broken seal, but say nothing yet.");
         let mut form = story(&dir);
         form.page = Page::Library(Kind::World);
         form.library.open_form(Kind::World, "w");
@@ -63,6 +73,7 @@ fn snapshots() {
             ("direction", direction),
             ("form", form),
             ("rename", rename),
+            ("ooc", ooc),
         ];
         for (name, mut chat) in screens {
             let pixels = frame(&mut gpu, &fonts, scheme, &mut |p, ui, view| {
@@ -150,6 +161,8 @@ fn story(dir: &Path) -> Chat {
         }),
         scene: "The night market under the old aqueduct; paper lanterns, rain on canvas awnings.".into(),
         memories: vec!["Wren carries a letter sealed with a heron.".into()],
+        model: "claude-opus-5-5".into(),
+        effort: "high".into(),
         note: String::new(),
         direction: openrp_core::Direction::default(),
         reviewed: 0,

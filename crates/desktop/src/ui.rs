@@ -204,6 +204,8 @@ pub mod icon {
     pub const X: char = '\u{e1b2}';
     /// A wand with sparkles: the AI writes it.
     pub const WAND: char = '\u{e357}';
+    /// Parentheses: out of character, as roleplayers write `((…))`.
+    pub const PARENTHESES: char = '\u{e444}';
     /// A painter's palette: how the app looks.
     pub const PALETTE: char = '\u{e1dd}';
     /// Sparkles: the models.
@@ -544,6 +546,7 @@ mod tests {
             icon::SETTINGS,
             icon::USERS,
             icon::WAND,
+            icon::PARENTHESES,
             icon::PALETTE,
             icon::SPARKLES,
             icon::CHART,
