@@ -39,6 +39,10 @@ fn snapshots() {
         menu.edit_direction();
         menu.menu = Some(Menu::Reasoning);
         menu.menu_anchor = Rect::new(788.0, 308.0, 168.0, 32.0);
+        // A story's menu, open under its row in the sidebar.
+        let mut session = story(&dir);
+        session.menu = Some(Menu::Session(session.current));
+        session.session_menu = Rect::new(8.0, 216.0, 244.0, 46.0);
         let mut picker = story(&dir);
         picker.menu = Some(Menu::CastLibrary);
         let mut spotlight = story(&dir);
@@ -53,9 +57,11 @@ fn snapshots() {
         rename.title_edit = Some((rename.current, editor));
         let mut ooc = story(&dir);
         if let Some(said) = ooc.current().entries.iter_mut().rev().find(|e| e.message.role == Role::User) {
-            said.message.content.push_str("\n/ooc Keep Mira guarded; she trusts no one yet.");
+            said.message.content =
+                "\"I'm staying.\" (She shouldn't trust me yet.) \"I have a letter for you, Mira.\"\n/ooc Keep it tense."
+                    .into();
         }
-        ooc.composer.insert("I slide the letter across the table.");
+        ooc.composer.insert("I slide the letter (the heron side up) across the table.");
         ooc.composer.set_mark(Some(ooc.composer.cursor()));
         ooc.composer.insert(" Have Mira notice the broken seal, but say nothing yet.");
         let mut form = story(&dir);
@@ -67,6 +73,7 @@ fn snapshots() {
             ("settings", settings),
             ("worlds", worlds),
             ("menu", menu),
+            ("session", session),
             ("picker", picker),
             ("spotlight", spotlight),
             ("dialog", dialog),

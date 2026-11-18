@@ -187,8 +187,8 @@ impl Chat {
                 let items = vec![
                     MenuItem::new("Duplicate", "Exact copy"),
                     MenuItem::new("Duplicate frame", "Cast and setup only"),
+                    MenuItem::new("Export story", "Full backup file"),
                     MenuItem::new("Export as text", "Readable transcript"),
-                    MenuItem::new("Export as JSONL", "SillyTavern chat"),
                     MenuItem::new("Delete", ""),
                 ];
                 content(self.session_menu, 280.0, true, ("Session", ""), items)

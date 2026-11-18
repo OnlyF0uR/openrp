@@ -160,11 +160,13 @@ cargo clippy --workspace --all-targets
   models refuse a temperature, so there it works through the instruction alone, and so it does for
   a model whose listed parameters leave temperature out. To speak out of character, press **OOC** in the
   composer's toolbar (out of character): everything you type or dictate after the caret from then on
-  is your instruction, shown muted and italic; pressed when nothing follows it (before you start, or
-  after you finish), the whole message is. The model is told it is your instruction, not your
-  character speaking, and it shows muted, in italics and parentheses, under your message. OOC stays on after you send
-  (the next message is all out of character, so dictating and pressing send is enough) until you
-  press it again. Your own `*actions*` are muted too, like the characters'.
+  is your instruction, shown grey; pressed when nothing follows it (before you start, or
+  after you finish), the whole message is. Text in parentheses is out of character too, anywhere
+  in a message, as often as you like: type them, or select some text and press OOC, which puts it
+  in parentheses. (Emoticons and `f(x)` are left alone; `\(` keeps a parenthesis as text.) The
+  model is told these are your instructions, not your character speaking. In the story they show
+  grey where they stand, without the parentheses or a label, and they show grey as you type. OOC stays on after you send (the next message is all out
+  of character, so dictating and pressing send is enough) until you press it again. Your own `*actions*` are muted too, like the characters'.
 - **Write for me**: in the composer's toolbar (or `/impersonate`), the AI writes your
   character's next message, streaming it into the composer to edit and send, or not. What you
   typed first is its starting point. Clicking again or Esc stops it. It reads the story as a
@@ -172,9 +174,17 @@ cargo clippy --workspace --all-targets
 - **Duplicate, export and delete**: a session's ⋯ in the sidebar deletes it,
   or (like `/duplicate` and `/frame`) copies it exactly, with every message, memory and the
   scene (replies are not billed twice), or as a **frame**: the world, your character, the cast
-  and the direction, ready for a new story. **Export as text** saves a readable transcript;
-  **Export as JSONL** a SillyTavern chat, one line per character's message, which SillyTavern
-  imports. A notice then offers the folder it went to.
+  and the direction, ready for a new story. **Export as text** saves a readable transcript.
+  A notice then offers the folder it went to.
+- **Story files**: **Export story** in a session's ⋯ saves all of a story as one `.openrp` file,
+  to back up or take to another computer: every message with its swipes, tool calls and costs,
+  the scene, memories, direction, model, your character and the cast, the world it is played in
+  with its lore, and their portraits. **Import stories** (the tray icon over the stories) reads
+  one or several back in and opens the last. A world your library lacks comes with its story;
+  one it has is left as it is, since you may have edited it since. A story you already have comes
+  in as a copy (its replies are not billed twice), and a portrait you already have is not copied
+  again. A world's private comment and star are not written into the file. A file from a newer
+  version of the app is refused rather than half read.
 - **Slash commands** in the composer, completed as you type (Tab completes, Enter runs, Esc
   dismisses): `/impersonate`, `/note`, `/memory`, `/memorize`, `/duplicate`, `/frame`, and
   `/clear`, which deletes the open story and starts it over in the same world, cast and note.
@@ -224,7 +234,7 @@ cargo clippy --workspace --all-targets
 
 | Crate             | Purpose                                                                          |
 |-------------------|----------------------------------------------------------------------------------|
-| `crates/core` (`openrp-core`) | API client: models and streaming replies with tools (Chat Completions for any OpenAI-compatible provider, `messages.rs` for Anthropic), config, sessions, worlds and characters, character cards and lorebooks (`card.rs`) |
+| `crates/core` (`openrp-core`) | API client: models and streaming replies with tools (Chat Completions for any OpenAI-compatible provider, `messages.rs` for Anthropic), config, sessions, worlds and characters, character cards and lorebooks (`card.rs`), story files (`story.rs`) |
 | `crates/desktop`  | The app (`openrp`): winit window, wgpu renderer, text engine, immediate-mode UI  |
 
 `crates/desktop/src`:
@@ -262,7 +272,7 @@ cargo clippy --workspace --all-targets
   `create_character`, `update_character` and `remember` tools, how they show, and parsing
   their arguments while they stream; `chat/names.rs`: telling characters apart by name;
   `chat/turns.rs`: editing, regenerating, swiping (replies and greetings) and deleting turns;
-  `chat/impersonate.rs`: Write for me; `chat/export.rs`: stories as text and SillyTavern chats;
+  `chat/impersonate.rs`: Write for me; `chat/export.rs`: stories as text;
   `chat/notice.rs`: notices.
 - `form.rs`: text fields for forms (focus, selection, keys).
 - `platform.rs`: OS integration (browser, file manager, the native open and save dialogs).

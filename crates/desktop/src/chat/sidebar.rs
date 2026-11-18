@@ -40,16 +40,24 @@ impl Chat {
             y += ROW_H + 2.0;
         }
 
-        // The stories' heading, with the search and a new story at its right.
+        // The stories' heading, with import, the search and a new story at
+        // its right; their hints take the heading's place while they show.
         let top = y + 12.0;
-        p.label("STORIES", theme::CAPTION, INSET + 10.0, top + 7.0, t.text_faint);
         let add = Rect::new(area.right() - INSET - 29.0, top, 28.0, 28.0);
         let search = Rect::new(add.x - 30.0, top, 28.0, 28.0);
+        let import = Rect::new(search.x - 30.0, top, 28.0, 28.0);
+        if ![add, search, import].into_iter().any(|tool| ui.hovered(tool)) {
+            p.label("STORIES", theme::CAPTION, INSET + 10.0, top + 7.0, t.text_faint);
+        }
         // A story starts from a world: a new one (Ctrl/Cmd+N) opens Worlds.
-        if tool(p, ui, add, icon::PLUS, &format!("New story  {PRIMARY_KEY}+N"), search.x - 8.0) {
+        if tool(p, ui, add, icon::PLUS, &format!("New story  {PRIMARY_KEY}+N"), import.x - 8.0) {
             self.show(Page::Library(Kind::World));
         }
-        if tool(p, ui, search, icon::SEARCH, &format!("Search  {PRIMARY_KEY}+K"), search.x - 8.0) {
+        // Story files (exported from a story's menu) come back in.
+        if tool(p, ui, import, icon::IMPORT, "Import stories", import.x - 8.0) {
+            actions.push(Action::ImportStories);
+        }
+        if tool(p, ui, search, icon::SEARCH, &format!("Search  {PRIMARY_KEY}+K"), import.x - 8.0) {
             self.open_spotlight();
             // The click that opened it is spent: Spotlight would take it
             // for one outside it, and close.

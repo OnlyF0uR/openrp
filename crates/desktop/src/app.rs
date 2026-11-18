@@ -16,7 +16,8 @@ use std::time::{Duration, Instant};
 use arboard::Clipboard;
 use openrp_core::{
     Character, Client, Config, Error, InputItem, Library, LoreEntry, Model, Persona, Portraits, ResponseRequest, Role,
-    SearchHit, Session, SessionStore, SessionSummary, StreamEvent, ToolCall, ToolChoice, ToolSpec, Usage, World,
+    STORY_EXTENSION, SearchHit, Session, SessionStore, SessionSummary, Story, StreamEvent, ToolCall, ToolChoice,
+    ToolSpec, Usage, World,
 };
 use winit::dpi::{LogicalPosition, LogicalSize};
 use winit::event::{ElementState, Ime, MouseButton, MouseScrollDelta, WindowEvent};
@@ -140,6 +141,14 @@ pub enum WorkerEvent {
     /// A lorebook was read for the open form: its entries (none when the
     /// picker was cancelled), or why it could not be.
     LoreImported(Result<Vec<LoreEntry>, String>),
+    /// Story files were read: the stories (portraits copied in) and, for
+    /// each file that could not be, why.
+    StoriesImported {
+        /// One per file read.
+        stories: Vec<Story>,
+        /// What went wrong with the others.
+        errors: Vec<String>,
+    },
     /// A card or story was saved where the user chose; `None` when they
     /// cancelled.
     Exported(Option<PathBuf>),
@@ -222,11 +231,14 @@ pub enum Action {
     ExportStory {
         /// The story, with every message.
         session: Session,
-        /// The name of its world.
-        world: String,
-        /// As a SillyTavern chat (JSONL) rather than a readable transcript.
-        jsonl: bool,
+        /// Its world, as the library has it.
+        world: Option<World>,
+        /// As a readable transcript rather than a story file, which holds
+        /// all of it and imports again.
+        text: bool,
     },
+    /// Ask for story files and read them in.
+    ImportStories,
     /// Show a folder (one a file was exported to) in the file manager.
     OpenFolder(PathBuf),
     /// Load the model list again (it failed before).
@@ -766,6 +778,9 @@ impl App {
                 chat.cards_imported(characters, errors, &mut actions);
             }
             (WorkerEvent::LoreImported(result), Screen::Chat(chat)) => chat.lore_imported(result),
+            (WorkerEvent::StoriesImported { stories, errors }, Screen::Chat(chat)) => {
+                chat.stories_imported(stories, errors, &mut actions);
+            }
             (WorkerEvent::Exported(path), Screen::Chat(chat)) => chat.exported(path),
             (WorkerEvent::CharacterGenerated { conversation, request, result }, Screen::Chat(chat)) => {
                 chat.character_generated(conversation, request, result);
@@ -970,15 +985,27 @@ impl App {
                 };
                 export("Export character card", &character.name, ("Character card", &[kind]), card)
             }),
-            Action::ExportStory { session, world, jsonl } => self.spawn(move |_, _| {
-                let name = if session.title.is_empty() { world.as_str() } else { session.title.as_str() };
-                let (filter, render): (platform::Filter<'_>, fn(&Session, &str) -> String) = if jsonl {
-                    (("SillyTavern chat", &["jsonl"]), chat::export::jsonl)
-                } else {
-                    (("Text", &["txt"]), chat::export::text)
+            Action::ExportStory { session, world, text } => {
+                let portraits = self.library.as_ref().map(|store| store.portraits.clone());
+                self.spawn(move |_, _| {
+                    let place = world.as_ref().map_or("", |w| w.name.as_str());
+                    let name = if session.title.is_empty() { place } else { session.title.as_str() };
+                    if text {
+                        let transcript = || Ok(chat::export::text(&session, place).into_bytes());
+                        return export("Export story as text", name, ("Text", &["txt"]), transcript);
+                    }
+                    export("Export story", name, ("OpenRP story", &[STORY_EXTENSION]), || {
+                        let portraits = portraits.ok_or("the portraits folder could not be opened")?;
+                        openrp_core::write_story(&session, world.as_ref(), &portraits).map_err(|e| e.to_string())
+                    })
+                });
+            }
+            Action::ImportStories => {
+                let Some(Store { portraits, .. }) = self.library.clone() else {
+                    return;
                 };
-                export("Export story", name, filter, || Ok(render(&session, &world).into_bytes()))
-            }),
+                self.spawn(move |_, _| import_stories(&portraits));
+            }
             Action::OpenFolder(path) => {
                 if let Err(e) = platform::open_folder(&path) {
                     log::error(format!("cannot open the folder: {e}"));
@@ -1437,12 +1464,48 @@ const MAX_IMPORT: u64 = 20 << 20;
 
 /// Reads a file the user picked, refusing huge ones.
 fn read_file(path: &std::path::Path) -> Result<Vec<u8>, String> {
-    let too_big = std::fs::metadata(path).map_err(|e| e.to_string())?.len() > MAX_IMPORT;
+    read_up_to(path, MAX_IMPORT)
+}
+
+/// The largest story file read: a long story with a portrait for everyone.
+const MAX_STORY: u64 = 256 << 20;
+
+/// Reads the file at `path` unless it is larger than `limit` bytes.
+fn read_up_to(path: &std::path::Path, limit: u64) -> Result<Vec<u8>, String> {
+    let too_big = std::fs::metadata(path).map_err(|e| e.to_string())?.len() > limit;
     if too_big {
-        Err("the file is larger than 20 MB".to_owned())
+        Err(format!("the file is larger than {} MB", limit >> 20))
     } else {
         std::fs::read(path).map_err(|e| e.to_string())
     }
+}
+
+/// Asks for story files and reads each, its portraits copied in under
+/// fresh names. Runs on a worker.
+fn import_stories(portraits: &Portraits) -> WorkerEvent {
+    let filter = ("OpenRP stories", &[STORY_EXTENSION][..]);
+    let paths = match platform::pick_files("Import stories", filter, true) {
+        Ok(paths) => paths,
+        Err(e) => {
+            let errors = vec![format!("Could not open the file picker: {e}")];
+            return WorkerEvent::StoriesImported { stories: Vec::new(), errors };
+        }
+    };
+    let (mut stories, mut errors) = (Vec::new(), Vec::new());
+    for path in paths {
+        let read = read_up_to(&path, MAX_STORY)
+            .and_then(|bytes| openrp_core::read_story(&bytes, portraits).map_err(|e| e.to_string()));
+        match read {
+            Ok(story) => stories.push(story),
+            Err(e) => {
+                let name =
+                    path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned());
+                log::error(format!("could not import {name}: {e}"));
+                errors.push(format!("Could not import {name}: {e}"));
+            }
+        }
+    }
+    WorkerEvent::StoriesImported { stories, errors }
 }
 
 /// Asks for character cards and reads each: a PNG card's image becomes

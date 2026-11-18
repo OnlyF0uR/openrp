@@ -395,21 +395,41 @@ impl Portraits {
     /// The image is larger than 20 MB, is not a PNG, JPEG or WebP, or cannot
     /// be written.
     pub fn add(&self, bytes: &[u8]) -> Result<String> {
+        let name = format!("{}.{}", crate::session::new_id(), Self::kind(bytes)?);
+        write_private(&self.dir.join(&name), bytes)?;
+        Ok(name)
+    }
+
+    /// Saves the PNG, JPEG or WebP `bytes` under `name`, the name they had
+    /// where they came from, so that stories sharing a portrait bring it
+    /// once; under a fresh name when `name` is taken, is not a portrait's
+    /// name or says another kind of image. Returns the name used.
+    ///
+    /// # Errors
+    /// As [`Portraits::add`].
+    pub fn keep(&self, name: &str, bytes: &[u8]) -> Result<String> {
+        let kind = Self::kind(bytes)?;
+        match self.path(name).filter(|path| name.rsplit_once('.').is_some_and(|(_, ext)| ext == kind) && !path.exists())
+        {
+            Some(path) => write_private(&path, bytes).map(|()| name.to_owned()),
+            None => self.add(bytes),
+        }
+    }
+
+    /// The file extension for image `bytes`.
+    fn kind(bytes: &[u8]) -> Result<&'static str> {
         if bytes.len() as u64 > MAX_PORTRAIT {
             return Err(invalid("The image is larger than 20 MB."));
         }
-        let ext = if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
-            "png"
+        if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+            Ok("png")
         } else if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
-            "jpg"
+            Ok("jpg")
         } else if bytes.starts_with(b"RIFF") && bytes.get(8..12) == Some(b"WEBP") {
-            "webp"
+            Ok("webp")
         } else {
-            return Err(invalid("Only PNG, JPEG and WebP images can be portraits."));
-        };
-        let name = format!("{}.{ext}", crate::session::new_id());
-        write_private(&self.dir.join(&name), bytes)?;
-        Ok(name)
+            Err(invalid("Only PNG, JPEG and WebP images can be portraits."))
+        }
     }
 
     /// Deletes every portrait not named in `keep` and last changed more than

@@ -37,11 +37,13 @@
 //! narration: text a story reply writes outside its calls is never shown.
 
 use std::fmt::Write as _;
+use std::ops::Range;
 
 use openrp_core::{CastMember, Player, Role, StoredMessage, ToolCall, ToolResult, new_id};
 use serde_json::{Value, json};
 
 use super::names::{self, Who};
+use crate::markdown::ASIDE;
 
 /// The speech tool's name.
 pub const SPEAK: &str = "speak";
@@ -186,27 +188,146 @@ pub fn review_tool() -> (&'static str, &'static str, Value) {
     )
 }
 
+/// The out-of-character asides typed in parentheses in what a user's
+/// message says: the byte range of each, its parentheses included, in
+/// order. Nested ones belong to the outermost; an unclosed one is not one.
+///
+/// A parenthesis counts as text when a backslash escapes it, when it is
+/// part of an emoticon (after `:`, `;` or `=`, with or without a `-`), or,
+/// for an opening one, when it follows a letter or digit (`f(x)`), though
+/// such a pair still nests inside an aside.
+#[must_use]
+pub fn asides(text: &str) -> Vec<Range<usize>> {
+    let mut spans: Vec<Range<usize>> = Vec::new();
+    // Where each open parenthesis is, and whether it can start an aside.
+    let mut open: Vec<(usize, bool)> = Vec::new();
+    let (mut before, mut earlier, mut escaped) = (None, None, false);
+    for (i, c) in text.char_indices() {
+        let emoticon = matches!(before, Some(':' | ';' | '='))
+            || (before == Some('-') && matches!(earlier, Some(':' | ';' | '=')));
+        match c {
+            '(' if !escaped && !emoticon => {
+                open.push((i, before.is_none_or(|b: char| b.is_whitespace() || b == '(')));
+            }
+            ')' if !escaped && !emoticon => {
+                if let Some((start, true)) = open.pop()
+                    && !text[start + 1..i].trim().is_empty()
+                {
+                    // Asides inside this one are part of it.
+                    spans.retain(|span| span.start < start);
+                    spans.push(start..i + 1);
+                }
+            }
+            _ => {}
+        }
+        escaped = c == '\\' && !escaped;
+        (earlier, before) = (before, Some(c));
+    }
+    spans
+}
+
+/// What the aside at `span` of `text` says, without its parentheses (or a
+/// second pair, as roleplayers write `((this))`).
+fn aside_text<'a>(text: &'a str, span: &Range<usize>) -> &'a str {
+    let mut inner = text[span.start + 1..span.end - 1].trim();
+    // Bounded: each pair costs a scan.
+    for _ in 0..3 {
+        let whole = asides(inner).first().is_some_and(|span| span.len() == inner.len());
+        if !whole {
+            break;
+        }
+        inner = inner[1..inner.len() - 1].trim();
+    }
+    inner
+}
+
+/// `text` with the backslashes that escape parentheses dropped.
+fn unescaped(text: &str) -> String {
+    text.replace("\\(", "(").replace("\\)", ")")
+}
+
 /// A user's message in a story as shown (Markdown): what they wrote, with
-/// an out-of-character instruction as a muted line under it, in
-/// parentheses (the roleplay sign for it, and the OOC button's icon), so
-/// it never reads as one of their `*actions*`.
+/// what is out of character (text in parentheses, and the instruction the
+/// OOC button added) as asides where they stand: muted, without their marks
+/// or a label (see [`ASIDE`]).
 #[must_use]
 pub fn user_display(text: &str) -> String {
+    // An aside's marks do not span lines: each line carries its own.
     let aside = |ooc: &str| {
-        let ooc = plain(ooc);
-        if ooc.starts_with('(') && ooc.ends_with(')') { format!("*{ooc}*") } else { format!("*({ooc})*") }
+        let lines = ooc
+            .lines()
+            .map(plain)
+            .map(|line| if line.is_empty() { line } else { format!("{}{line}{}", ASIDE.0, ASIDE.1) });
+        lines.collect::<Vec<_>>().join("\n")
     };
-    match split_ooc(text) {
-        ("", Some(ooc)) => aside(ooc),
-        (said, Some(ooc)) => format!("{said}\n\n{}", aside(ooc)),
-        (said, None) => said.trim_end().to_owned(),
+    let (said, instruction) = split_ooc(text);
+    let mut shown = String::new();
+    let mut at = 0;
+    for span in asides(said) {
+        shown.push_str(&said[at..span.start]);
+        shown.push_str(&aside(aside_text(said, &span)));
+        at = span.end;
     }
+    shown.push_str(said[at..].trim_end());
+    if let Some(instruction) = instruction {
+        if !shown.is_empty() {
+            shown.push(' ');
+        }
+        shown.push_str(&aside(instruction));
+    }
+    shown
+}
+
+/// What a user's message says in character alone: its asides and its
+/// out-of-character instruction left out.
+#[must_use]
+pub fn spoken(text: &str) -> String {
+    let said = split_ooc(text).0;
+    let mut out = String::new();
+    let mut at = 0;
+    let mut push = |part: &str| {
+        // Where an aside stood, one space is enough.
+        let part = if out.is_empty() || out.ends_with(char::is_whitespace) { part.trim_start() } else { part };
+        out.push_str(part);
+    };
+    for span in asides(said) {
+        push(&said[at..span.start]);
+        at = span.end;
+    }
+    push(&said[at..]);
+    unescaped(out.trim())
+}
+
+/// Everything a user's message says out of character, on one line.
+#[must_use]
+pub fn instructions(text: &str) -> String {
+    let (said, instruction) = split_ooc(text);
+    let spans = asides(said);
+    let mut all: Vec<&str> = spans.iter().map(|span| aside_text(said, span)).collect();
+    all.extend(instruction);
+    all.join(" ")
+}
+
+/// What a user's message says as the model reads it: each aside marked
+/// `(OOC: …)` where it stands. Also whether there was one.
+#[must_use]
+pub fn mark_asides(said: &str) -> (String, bool) {
+    let spans = asides(said);
+    let mut out = String::new();
+    let mut at = 0;
+    for span in &spans {
+        let _ = write!(out, "{}(OOC: {})", unescaped(&said[at..span.start]), unescaped(aside_text(said, span)));
+        at = span.end;
+    }
+    out.push_str(&unescaped(&said[at..]));
+    (out, !spans.is_empty())
 }
 
 /// The message the composer sends for `text` whose out-of-character part
 /// starts at byte `from` (the OOC button): everything from there is the
 /// instruction, or the whole text when nothing follows `from`. Stored as
-/// [`split_ooc`] reads it.
+/// [`split_ooc`] reads it; asides typed in parentheses stay as typed
+/// ([`asides`]).
 #[must_use]
 pub fn with_ooc(text: &str, from: Option<usize>) -> String {
     let Some(from) = from else { return text.trim().to_owned() };
@@ -330,7 +451,7 @@ pub fn transcript(messages: &[StoredMessage], player: &str, limit: usize) -> Str
     let mut out = String::new();
     for message in messages.iter().filter(|m| !m.failed && !m.compaction) {
         if message.role == Role::User {
-            let said = split_ooc(&message.content).0;
+            let said = spoken(&message.content);
             if !said.is_empty() {
                 let _ = writeln!(out, "{player}: {said}\n");
             }
@@ -873,7 +994,7 @@ pub fn display(parts: &[Part]) -> String {
 fn plain(text: &str) -> String {
     text.chars()
         .map(|c| if c.is_control() { ' ' } else { c })
-        .filter(|c| !matches!(c, '*' | '_' | '`'))
+        .filter(|c| !matches!(c, '*' | '_' | '`') && *c != ASIDE.0 && *c != ASIDE.1)
         .collect::<String>()
         .trim()
         .to_owned()
@@ -941,6 +1062,31 @@ fn close(text: &str) -> (String, Vec<usize>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parentheses_are_out_of_character() {
+        let spans = |text: &str| asides(text).into_iter().map(|s| text[s].to_owned()).collect::<Vec<_>>();
+        assert_eq!(spans("I knock. (make it tense) I wait. (slowly)"), ["(make it tense)", "(slowly)"]);
+        assert_eq!(spans("(tell her (quietly) to go) ok"), ["(tell her (quietly) to go)"], "the outermost");
+        assert_eq!(spans("(see f(x) here)"), ["(see f(x) here)"], "a pair inside nests");
+        assert_eq!(spans("an (open one, and (a closed one)"), ["(a closed one)"]);
+        assert!(spans("f(x), sad :( and glad :-) and \\(kept\\) and () and )(").is_empty(), "text, not asides");
+        assert_eq!(spans("(I'm sad :( really)"), ["(I'm sad :( really)"], "an emoticon is no parenthesis");
+        assert!(spans(&"(".repeat(5000)).is_empty());
+        assert_eq!(spans(&format!("{}é{}", "(".repeat(3000), ")".repeat(3000))).len(), 1);
+
+        assert_eq!(
+            user_display("I knock. (make it *tense*) I wait.\n/ooc and slow"),
+            "I knock. \u{E000}make it tense\u{E001} I wait. \u{E000}and slow\u{E001}"
+        );
+        assert_eq!(user_display("((skip ahead))"), "\u{E000}skip ahead\u{E001}", "a second pair is dropped too");
+        assert_eq!(user_display("(one\n\ntwo)"), "\u{E000}one\u{E001}\n\n\u{E000}two\u{E001}", "each line marked");
+        assert_eq!(spoken("I knock. (make it tense) I wait. \\(sic\\)\n/ooc slow"), "I knock. I wait. (sic)");
+        assert_eq!(spoken("(only this)"), "");
+        assert_eq!(instructions("I knock. (tense) I wait.\n/ooc slow"), "tense slow");
+        assert_eq!(mark_asides("I knock. (tense) \\(sic\\)"), ("I knock. (OOC: tense) (sic)".to_owned(), true));
+        assert_eq!(mark_asides("I knock."), ("I knock.".to_owned(), false));
+    }
 
     #[test]
     fn the_ooc_button_marks_the_rest_or_everything() {

@@ -237,7 +237,7 @@ impl Session {
     }
 
     /// Brings a session written by an older format up to this one.
-    fn upgrade(&mut self) {
+    pub(crate) fn upgrade(&mut self) {
         if self.version == 0 {
             // `reviewed` counted messages; it counts prompts now, which
             // deleting replies or summarising does not shift.

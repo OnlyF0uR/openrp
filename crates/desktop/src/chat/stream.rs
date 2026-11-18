@@ -146,6 +146,9 @@ const MEMORIES: &str = "Facts from earlier in the story. When a later turn contr
 const DIRECTION: &str = "The user's direction for the whole story. Follow it in every reply.";
 /// Introduces an out-of-character instruction sent with a user message.
 const OOC: &str = "(OOC: the user's instruction for this reply, not something their character says or does.)";
+/// Follows a user message with asides, which are marked `(OOC: …)` in it.
+const OOC_ASIDES: &str =
+    "(What is marked OOC above is the user's instruction for this reply, not something their character says or does.)";
 /// Opens the list of cast members away from the scene.
 const ELSEWHERE: &str = "In the story but not in this scene: they act only when the user brings them in.";
 /// Stands in for the description of a character who has none.
@@ -373,11 +376,15 @@ pub fn attach_state(items: &mut Vec<InputItem>, state: &str) {
 }
 
 /// A user message as the model reads it: what their character says and
-/// does, then any out-of-character instruction (see [`tools::split_ooc`]).
+/// does, the asides in it marked where they stand (see [`tools::asides`]),
+/// then any out-of-character instruction (see [`tools::split_ooc`]).
 fn user_text(text: &str) -> String {
-    match tools::split_ooc(text) {
+    let (said, instruction) = tools::split_ooc(text);
+    let (said, asides) = tools::mark_asides(said);
+    match (said.as_str(), instruction) {
         ("", Some(ooc)) => format!("{OOC}\n\n{ooc}"),
         (said, Some(ooc)) => format!("{said}\n\n{OOC}\n\n{ooc}"),
+        (said, None) if asides => format!("{said}\n\n{OOC_ASIDES}"),
         (said, None) => said.to_owned(),
     }
 }
@@ -1377,12 +1384,18 @@ mod tests {
         assert_eq!(user_text("I knock.\n/ooc make it tense"), format!("I knock.\n\n{OOC}\n\nmake it tense"));
         assert_eq!(user_text("  /ooc  skip ahead a day "), format!("{OOC}\n\nskip ahead a day"));
         assert_eq!(user_text("/oocx"), "/oocx", "only the command itself");
+        assert_eq!(
+            user_text("I knock. (make it tense) I wait."),
+            format!("I knock. (OOC: make it tense) I wait.\n\n{OOC_ASIDES}")
+        );
+        assert_eq!(user_text("I knock. (tense)\n/ooc slow"), format!("I knock. (OOC: tense)\n\n{OOC}\n\nslow"));
+        assert_eq!(user_text("f(x) :("), "f(x) :(", "as typed");
         let items = input_items(&[StoredMessage::new(Role::User, "Hi.\n/ooc be brief".into())]);
         assert!(
             matches!(&items[0], InputItem::Message { text, .. } if text.ends_with("be brief") && text.contains(OOC))
         );
-        assert_eq!(tools::user_display("I *wave*.\n/ooc a *dark* turn"), "I *wave*.\n\n*(a dark turn)*");
-        assert_eq!(tools::user_display("/ooc ((skip ahead))"), "*((skip ahead))*", "no brackets twice");
+        assert_eq!(tools::user_display("I *wave*.\n/ooc a *dark* turn"), "I *wave*. \u{E000}a dark turn\u{E001}");
+        assert_eq!(tools::user_display("/ooc skip *ahead*"), "\u{E000}skip ahead\u{E001}", "no marks");
         assert_eq!(tools::split_ooc("/ooc"), ("", None));
     }
 

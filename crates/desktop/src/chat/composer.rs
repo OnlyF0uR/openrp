@@ -3,18 +3,20 @@
 //! `impersonate.rs`) and send, and the slash commands it completes. The
 //! story's model and effort are picked in its Direction.
 //!
-//! OOC marks the rest of the message, from the caret, as an instruction to
-//! the AI rather than something the user's character says (the editor's
-//! mark keeps where it starts). When nothing follows the mark, all of the
-//! message is. The part that will go out of character shows muted. It stays
+//! What is out of character (an instruction to the AI rather than something
+//! the user's character says) shows grey, as it does in the story once
+//! sent. Two ways mark it, which combine. Text typed in parentheses is,
+//! anywhere in a message (`tools::asides`). And OOC marks the rest of the
+//! message, from the caret (the editor's mark keeps where it starts), or
+//! all of it when nothing follows the mark; with text selected, it puts
+//! that in parentheses instead. It stays
 //! on after sending (the next message is all out of character) until pressed
 //! off, so dictating and pressing send is enough.
 
 use winit::window::CursorIcon;
 
-use super::Chat;
+use super::{Chat, tools};
 use crate::app::Action;
-use crate::font::FontId;
 use crate::paint::{Painter, Rect, fade, mix};
 use crate::text::Run;
 use crate::theme;
@@ -85,6 +87,27 @@ impl Command {
 }
 
 impl Chat {
+    /// The OOC button: turns out of character on from the caret, or off;
+    /// with text selected (and it off), puts that in parentheses instead,
+    /// which makes it an aside.
+    pub(super) fn toggle_ooc(&mut self) {
+        let composer = &mut self.composer;
+        if composer.mark().is_some() {
+            composer.set_mark(None);
+        } else if composer.selection().is_empty() {
+            composer.set_mark(Some(composer.cursor()));
+        } else {
+            // Its own word, so the parentheses read as an aside's.
+            let (text, range) = (composer.text(), composer.selection());
+            let picked = &text[range.clone()];
+            let (lead, trail) = (picked.len() - picked.trim_start().len(), picked.trim_end().len());
+            let glued = lead == 0 && text[..range.start].chars().next_back().is_some_and(|c| !c.is_whitespace());
+            let space = if glued { " " } else { "" };
+            let aside = format!("{}{space}({}){}", &picked[..lead], picked.trim(), &picked[trail..]);
+            composer.insert(&aside);
+        }
+    }
+
     /// Draws the composer. Returns its top edge and its card, which the
     /// command menu opens over.
     pub(super) fn draw_composer(
@@ -111,6 +134,8 @@ impl Chat {
             }
             None => (self.composer.text().to_owned(), None),
         };
+        // Out of character: from the OOC mark on (all of it when nothing
+        // follows), and what is in parentheses before that.
         let ooc = self.composer.mark().map(|mark| {
             // The input method's text shifts what follows the caret.
             let mark = match &preedit {
@@ -120,8 +145,12 @@ impl Chat {
             let rest = shown.get(mark..).unwrap_or_default();
             if rest.trim().is_empty() { 0..shown.len() } else { mark..shown.len() }
         });
-        let spans: Vec<_> =
-            ooc.iter().map(|range| (range.clone(), Run { ink: 1, ..Run::plain(FontId::ITALIC) })).collect();
+        let said = ooc.as_ref().map_or(shown.as_str(), |rest| shown.get(..rest.start).unwrap_or_default());
+        let spans: Vec<_> = tools::asides(said)
+            .into_iter()
+            .chain(ooc.clone().filter(|rest| !rest.is_empty()))
+            .map(|range| (range, Run { ink: 1, ..Run::plain(theme::BODY.font) }))
+            .collect();
         let layout = p.layout_rich(&shown, &spans, theme::BODY, Some(text_w));
         let line_h = layout.line_height();
         let visible_h = layout.line_count().min(MAX_LINES) as f32 * line_h;
@@ -182,8 +211,7 @@ impl Chat {
         }
         if shown.is_empty() && ooc.is_some() {
             let invite = "Out of character: tell the AI what you want";
-            let invite = p.layout_rich(invite, &[(0..invite.len(), Run::plain(FontId::ITALIC))], theme::BODY, None);
-            p.text(&invite, origin.0, origin.1, t.text_faint);
+            p.label(invite, theme::BODY, origin.0, origin.1, t.text_faint);
         } else if shown.is_empty() {
             let invite = if self.current().world.is_some() { "What do you do?" } else { "Message OpenRP" };
             let width = p.label(invite, theme::BODY, origin.0, origin.1, t.text_faint);
@@ -228,8 +256,7 @@ impl Chat {
             if hovered {
                 ui.cursor = CursorIcon::Pointer;
                 if ui.clicked(ooc_button) {
-                    let at = (!marked).then(|| self.composer.cursor());
-                    self.composer.set_mark(at);
+                    self.toggle_ooc();
                     ui.last_edit = ui.time;
                 }
             }

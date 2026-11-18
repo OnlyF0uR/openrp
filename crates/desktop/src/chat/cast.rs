@@ -719,13 +719,14 @@ mod tests {
         chat.library_loaded(vec![world], Vec::new(), Vec::new(), Portraits::at("portraits".into()));
         let id = chat.conversations.iter().find(|c| c.session_id == "s").unwrap().id;
         let mut actions = Vec::new();
-        chat.export(id, true, &mut actions);
+        chat.export(id, false, &mut actions);
         assert!(matches!(&actions[..], [Action::LoadSession { .. }]), "read first");
         let mut actions = Vec::new();
         chat.session_loaded(id, Ok(session), &mut actions);
-        assert!(
-            matches!(&actions[..], [Action::ExportStory { session, world, jsonl: true }] if session.messages.len() == 1 && world == "Ard")
-        );
+        let [Action::ExportStory { session, world: Some(world), text: false }] = &actions[..] else {
+            panic!("exported as a story file, with its world")
+        };
+        assert_eq!((session.messages.len(), world.name.as_str()), (1, "Ard"));
     }
 
     #[test]

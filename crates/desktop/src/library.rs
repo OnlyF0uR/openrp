@@ -345,24 +345,28 @@ impl Record {
     }
 
     /// The action that saves this record as a `kind`.
+    /// The world this record holds, as it is saved.
+    #[must_use]
+    pub fn world(&self) -> World {
+        let r = self.clone();
+        World {
+            version: World::VERSION,
+            id: r.id,
+            name: r.name,
+            description: r.description,
+            portrait: r.portrait,
+            comment: r.comment,
+            tags: r.tags,
+            favorite: r.favorite,
+            lore: r.lore,
+            created: r.created,
+            updated: r.updated,
+        }
+    }
+
     fn save_action(&self, kind: Kind) -> Action {
         match kind {
-            Kind::World => {
-                let r = self.clone();
-                Action::SaveWorld(World {
-                    version: World::VERSION,
-                    id: r.id,
-                    name: r.name,
-                    description: r.description,
-                    portrait: r.portrait,
-                    comment: r.comment,
-                    tags: r.tags,
-                    favorite: r.favorite,
-                    lore: r.lore,
-                    created: r.created,
-                    updated: r.updated,
-                })
-            }
+            Kind::World => Action::SaveWorld(self.world()),
             Kind::Character => Action::SaveCharacter(self.character()),
             Kind::Persona => {
                 let r = self.clone();
@@ -915,6 +919,13 @@ impl LibraryView {
             self.form = Some(Form::new(Kind::Character, Some(record)));
             self.scroll = 0.0;
         }
+    }
+
+    /// Adds `world`, which came with an imported story, to the library.
+    pub fn add_world(&mut self, world: World, actions: &mut Vec<Action>) {
+        let mut record = Record::from(World { version: World::VERSION, ..world });
+        record.name = record.name.chars().take(NAME_LIMIT).collect();
+        self.put(Kind::World, record, actions);
     }
 
     /// The lorebook picker closed: its entries join the open form's lore

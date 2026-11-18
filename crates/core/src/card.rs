@@ -360,7 +360,7 @@ fn crc32(parts: &[&[u8]]) -> u32 {
 }
 
 /// Standard base64 of `bytes`, padded.
-fn base64(bytes: &[u8]) -> String {
+pub(crate) fn base64(bytes: &[u8]) -> String {
     const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
     for group in bytes.chunks(3) {
@@ -374,7 +374,7 @@ fn base64(bytes: &[u8]) -> String {
 
 /// Decodes base64 (standard or URL-safe, padding and line breaks allowed);
 /// `None` on any other character.
-fn base64_decode(text: &[u8]) -> Option<Vec<u8>> {
+pub(crate) fn base64_decode(text: &[u8]) -> Option<Vec<u8>> {
     let mut out = Vec::with_capacity(text.len() / 4 * 3);
     let (mut acc, mut bits) = (0u32, 0u32);
     for &c in text {

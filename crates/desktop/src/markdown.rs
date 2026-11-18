@@ -23,9 +23,16 @@ pub struct Mark {
     pub code: bool,
     /// `~~struck~~`.
     pub strike: bool,
+    /// Between [`ASIDE`]'s marks: an aside, such as the user's
+    /// out-of-character instruction, shown muted.
+    pub aside: bool,
     /// Index into [`Inline::links`] plus one; zero when not a link.
     pub link: u16,
 }
+
+/// The marks around an aside ([`Mark::aside`]): private-use characters,
+/// which nobody types, so only the app writes one.
+pub const ASIDE: (char, char) = ('\u{E000}', '\u{E001}');
 
 /// Paragraph-level text with its styled spans.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -514,6 +521,12 @@ fn inline_into(src: &str, mark: Mark, out: &mut Inline, depth: usize) {
                     end + run
                 })
             }
+            _ if src[i..].starts_with(ASIDE.0) => src[i..].find(ASIDE.1).map(|n| {
+                push_text(out, &src[plain..i], mark);
+                let open = ASIDE.0.len_utf8();
+                inline_into(&src[i + open..i + n], Mark { aside: true, ..mark }, out, depth + 1);
+                i + n + ASIDE.1.len_utf8()
+            }),
             b'~' if bytes.get(i + 1) == Some(&b'~') => closing_run(src, i + 2, b'~', 2).map(|end| {
                 push_text(out, &src[plain..i], mark);
                 inline_into(&src[i + 2..end], Mark { strike: true, ..mark }, out, depth + 1);
@@ -602,6 +615,10 @@ mod tests {
         let it = Mark { emphasis: true, ..Mark::default() };
         let code = Mark { code: true, ..Mark::default() };
         let strike = Mark { strike: true, ..Mark::default() };
+        let aside = parse_inline("I knock. \u{E000}make it *tense*\u{E001}");
+        assert_eq!(aside.text, "I knock. make it tense", "its marks are not shown");
+        assert!(aside.spans.iter().all(|(range, mark)| mark.aside == (range.start >= 9)));
+        assert_eq!(parse_inline("\u{E000}open").text, "\u{E000}open", "unclosed: as typed");
         assert_eq!(marks(&i), [("bold", bold), ("it", it), ("co*de", code), ("no", strike), ("3", it)]);
 
         let nested = parse_inline("***both*** and **bold *inner***");

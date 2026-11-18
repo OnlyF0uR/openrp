@@ -30,7 +30,8 @@ use std::sync::atomic::Ordering;
 
 use arboard::Clipboard;
 use openrp_core::{
-    CastMember, Direction, Error, Model, Player, Role, Session, SessionSummary, StoredMessage, Usage, new_id, unix_now,
+    CastMember, Direction, Error, Model, Player, Role, Session, SessionSummary, StoredMessage, Story as StoryFile,
+    Usage, new_id, unix_now,
 };
 use winit::event::KeyEvent;
 use winit::keyboard::{Key, ModifiersState, NamedKey};
@@ -234,7 +235,8 @@ enum Menu {
 enum Pending {
     /// Copy it, as a frame when `true`.
     Duplicate(bool),
-    /// Export it, as a SillyTavern chat when `true`.
+    /// Export it: as a readable transcript when `true`, as a story file
+    /// otherwise.
     Export(bool),
 }
 
@@ -1028,16 +1030,58 @@ impl Chat {
     }
 
     /// Asks where to save conversation `id` and saves it there: as a
-    /// SillyTavern chat when `jsonl`, as a readable transcript otherwise.
-    pub(super) fn export(&mut self, id: u64, jsonl: bool, actions: &mut Vec<Action>) {
-        let Some(conversation) = self.read_first(id, Pending::Export(jsonl), actions) else { return };
+    /// readable transcript when `text`, otherwise as a story file, which
+    /// holds all of it (its world and portraits too) and imports again.
+    pub(super) fn export(&mut self, id: u64, text: bool, actions: &mut Vec<Action>) {
+        let Some(conversation) = self.read_first(id, Pending::Export(text), actions) else { return };
         let session = conversation.to_session();
-        let world = session
-            .world
-            .as_deref()
-            .and_then(|w| self.library.get(Kind::World, w))
-            .map_or_else(String::new, |w| w.name.clone());
-        actions.push(Action::ExportStory { session, world, jsonl });
+        let world = session.world.as_deref().and_then(|w| self.library.get(Kind::World, w)).map(Record::world);
+        actions.push(Action::ExportStory { session, world, text });
+    }
+
+    /// Story files were read (their portraits copied in): each becomes a
+    /// story here, and the last is opened. A world the library lacks comes
+    /// with its story; one it has is left as it is, since it may have been
+    /// edited since. A story that is here already comes in as a copy, whose
+    /// replies are not billed twice. `errors` tell of the files that could
+    /// not be read.
+    pub fn stories_imported(&mut self, stories: Vec<StoryFile>, errors: Vec<String>, actions: &mut Vec<Action>) {
+        let mut opened = None;
+        for StoryFile { mut session, world } in stories {
+            match (world, session.world.as_deref()) {
+                (Some(world), _) if self.library.get(Kind::World, &world.id).is_none() => {
+                    self.library.add_world(world, actions);
+                }
+                (None, Some(world)) if self.library.get(Kind::World, world).is_none() => {
+                    let name = if session.title.is_empty() { "a story" } else { session.title.as_str() };
+                    self.notify(format!("Could not import {name}: its world is not in the file."), false);
+                    continue;
+                }
+                _ => {}
+            }
+            if self.conversations.iter().any(|c| c.session_id == session.id) {
+                session.id = new_id();
+                if !session.title.is_empty() {
+                    session.title.push_str(" (copy)");
+                }
+                session.messages.iter_mut().for_each(unbilled);
+            }
+            // Listed first, as the story last touched.
+            session.updated = unix_now();
+            let id = self.next_id();
+            let mut conversation = Conversation::from_summary(id, session.summary());
+            conversation.load = Load::Loading;
+            self.conversations.insert(0, conversation);
+            self.session_loaded(id, Ok(session.clone()), actions);
+            actions.push(Action::SaveSession(session));
+            opened = Some(id);
+        }
+        if let Some(id) = opened {
+            self.select(id);
+        }
+        for error in errors {
+            self.notify(error, false);
+        }
     }
 
     /// Deletes the open story (stopping its reply) and starts it over in
@@ -1109,7 +1153,7 @@ impl Chat {
         conversation.load = Load::Loaded;
         match self.pending.take_if(|(id, _)| *id == conversation_id) {
             Some((id, Pending::Duplicate(frame))) => self.duplicate(id, frame, actions),
-            Some((id, Pending::Export(jsonl))) => self.export(id, jsonl, actions),
+            Some((id, Pending::Export(text))) => self.export(id, text, actions),
             None => {}
         }
     }
@@ -1195,10 +1239,8 @@ impl Chat {
         }
         if conversation.title.is_empty() {
             // Named by what is said, not by an out-of-character instruction.
-            let said = match tools::split_ooc(&text) {
-                ("", Some(ooc)) => ooc,
-                (said, _) => said,
-            };
+            let said = tools::spoken(&text);
+            let said = if said.is_empty() { tools::instructions(&text) } else { said };
             conversation.title = said.lines().next().unwrap_or_default().chars().take(TITLE_CHARS).collect();
         }
         conversation.entries.push(Entry::new(user_id, StoredMessage::new(Role::User, text)));
@@ -2159,6 +2201,18 @@ mod tests {
         let mut chat = new_chat();
         start(&mut chat, "I knock.");
         assert_eq!(chat.composer.mark(), None, "off stays off");
+
+        // With text selected, OOC makes an aside of it and stays off.
+        chat.composer.insert("I knock slowly twice.");
+        chat.composer.set_cursor(7, false);
+        chat.composer.set_cursor(14, true);
+        chat.toggle_ooc();
+        assert_eq!((chat.composer.text(), chat.composer.mark()), ("I knock (slowly) twice.", None));
+        chat.composer.set_cursor(2, false);
+        chat.composer.set_cursor(4, true);
+        chat.toggle_ooc();
+        assert_eq!(chat.composer.text(), "I (kn)ock (slowly) twice.", "set apart from the word before it");
+        assert_eq!(tools::asides(chat.composer.text()).len(), 2);
     }
 
     #[test]
@@ -2173,6 +2227,45 @@ mod tests {
         assert_eq!(chat.request_model(id), ("a".to_owned(), Some("high")));
         let saved = chat.current().to_session();
         assert_eq!((saved.model.as_str(), saved.effort.as_str()), ("a", "high"));
+    }
+
+    #[test]
+    fn stories_import_with_their_world() {
+        let mut chat = new_chat();
+        let world = openrp_core::World { id: "w9".into(), name: "Ard".into(), ..openrp_core::World::default() };
+        let mut reply = StoredMessage::new(Role::Assistant, "Hello.".into());
+        reply.cost = 0.5;
+        let session = Session {
+            version: Session::VERSION,
+            id: "s9".into(),
+            title: "The Lantern".into(),
+            world: Some("w9".into()),
+            player: Some(Player { name: "Gale".into(), ..Player::default() }),
+            messages: vec![StoredMessage::new(Role::User, "Hi.".into()), reply],
+            ..Session::default()
+        };
+        let story = StoryFile { session: session.clone(), world: Some(world) };
+        let mut actions = Vec::new();
+        chat.stories_imported(vec![story.clone()], vec!["Could not import x: broken".into()], &mut actions);
+        assert!(matches!(&actions[..], [Action::SaveWorld(w), Action::SaveSession(s)] if w.id == "w9" && s.id == "s9"));
+        assert_eq!(chat.library.get(Kind::World, "w9").map(|w| w.name.as_str()), Some("Ard"));
+        let current = chat.current();
+        assert_eq!((current.title.as_str(), current.entries.len(), &current.load), ("The Lantern", 2, &Load::Loaded));
+        assert!((current.cost() - 0.5).abs() < 1e-9, "a story from elsewhere keeps what it cost");
+        assert_eq!(chat.notices.len(), 1, "a file that could not be read is told");
+
+        // Again: the world is here already, and the story comes in as a copy.
+        actions.clear();
+        chat.stories_imported(vec![story], Vec::new(), &mut actions);
+        let [Action::SaveSession(copy)] = &actions[..] else { panic!("only the story is saved") };
+        assert!(copy.id != "s9" && copy.title == "The Lantern (copy)" && copy.messages[1].cost == 0.0);
+        assert_eq!(chat.conversations.iter().filter(|c| c.world.as_deref() == Some("w9")).count(), 2);
+
+        // Without its world, in the file or here, a story cannot be told.
+        let lost = Session { id: "s10".into(), world: Some("nowhere".into()), ..session };
+        actions.clear();
+        chat.stories_imported(vec![StoryFile { session: lost, world: None }], Vec::new(), &mut actions);
+        assert!(actions.is_empty() && chat.notices.len() == 2);
     }
 
     fn new_chat() -> Chat {

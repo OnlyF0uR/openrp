@@ -7,6 +7,8 @@
 //! * [`Library`]: [`World`]s, [`Character`]s and [`Persona`]s in
 //!   `~/.openrp/worlds/`, `~/.openrp/characters/` and `~/.openrp/personas/`, and character cards and lorebooks to share
 //!   them with other roleplay apps.
+//! * [`write_story`] and [`read_story`]: a story as one file, with its world
+//!   and portraits, to back up or take to another computer.
 //!
 //! All network calls are blocking; run them off the UI thread.
 
@@ -20,6 +22,7 @@ mod messages;
 mod responses;
 mod session;
 mod sse;
+mod story;
 
 pub use card::{card_json, embed_card, macros, read_card, read_lorebook};
 pub use client::{Client, Model};
@@ -31,3 +34,4 @@ pub use session::{
     CastMember, Creativity, Direction, Length, Player, SearchHit, Session, SessionStore, SessionSummary, StoredMessage,
     StoryChange, ToolResult, new_id, rename, unix_now,
 };
+pub use story::{STORY_EXTENSION, Story, read_story, write_story};

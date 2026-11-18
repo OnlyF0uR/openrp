@@ -495,6 +495,8 @@ impl Builder<'_> {
                 INK_LINK
             } else if mark.code {
                 INK_CODE
+            } else if mark.aside {
+                INK_MUTED
             } else if mark.emphasis {
                 self.emphasis_ink
             } else {
