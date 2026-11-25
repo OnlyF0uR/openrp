@@ -315,6 +315,33 @@ impl Chat {
         self.turn_edit = None;
     }
 
+    /// The arrow keys' swipe: to the previous reply of the last prompt (or
+    /// greeting, before anyone wrote), or the next; past the last reply,
+    /// a new one.
+    pub(super) fn swipe_key(&mut self, forward: bool, actions: &mut Vec<Action>) {
+        let conversation = self.current();
+        if !conversation.settled() {
+            return;
+        }
+        let step = |shown: usize| if forward { Some(shown + 1) } else { shown.checked_sub(1) };
+        if let Some((shown, count)) = conversation.greetings() {
+            if let Some(target) = step(shown).filter(|&t| t < count) {
+                self.swipe_greeting(target, actions);
+            }
+            return;
+        }
+        let Some((prompt, shown, count)) = conversation.swipes() else { return };
+        // Only while the last prompt has been answered.
+        if prompt + 1 == conversation.entries.len() {
+            return;
+        }
+        match step(shown) {
+            Some(target) if target < count => self.swipe_to(target, actions),
+            Some(_) => self.regenerate(actions),
+            None => {}
+        }
+    }
+
     /// Shows greeting `target` (from 0) in place of the one opening the
     /// story, before anyone wrote. Saves the story.
     pub(super) fn swipe_greeting(&mut self, target: usize, actions: &mut Vec<Action>) {

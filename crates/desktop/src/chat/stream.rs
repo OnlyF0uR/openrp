@@ -124,15 +124,18 @@ const ROLEPLAY: &str = "You play every character in an interactive roleplay stor
 /// How the model plays a chat's one character. Plain and short on purpose:
 /// chats run on small models too, which follow a few clear rules best.
 /// `{char}` and `{user}` are the two names.
-const CHAT: &str = "You are {char}. You are in a private one-on-one roleplay chat with {user}. Write {char}'s next reply.\n\n\
+const CHAT: &str = "You are {char}. You are in a roleplay chat with {user}. Write {char}'s next reply.\n\n\
     Rules:\n\
     - Write only as {char}: what {char} says and does. Never write {user}'s words, actions or thoughts.\n\
     - Write in first person. Put actions in *asterisks*. Write speech as plain text, with no name in front.\n\
+    - The world around you is alive. In your actions, show where you are and what is going on: the place, its sounds and \
+    smells, the weather, the people nearby. When you go somewhere new, describe it.\n\
+    - Only {char} speaks. Anyone else around (a waiter, a passer-by) is described inside your actions, e.g. *A waiter sets \
+    down two cups and leaves.*\n\
     - React to what {user} just said or did, then give {user} something to answer: a question, a choice, a feeling or a move of \
     your own.\n\
     - Stay true to {char}'s personality, voice and history below. {char} has their own wants and moods, and can disagree, tease \
     or refuse.\n\
-    - Other people can be mentioned, but only {char} speaks in this chat.\n\
     - Never repeat an earlier reply or {user}'s message. Show feelings through actions and words; avoid stock phrases.\n\
     - Text marked OOC is {user}'s instruction to you, the writer: follow it, but {char} does not hear it.";
 /// Opens the notes sent with a chat's latest message, when there are any.
@@ -140,6 +143,10 @@ const CHAT_STATE: &str = "[Chat notes, kept by the app: not part of the message 
 /// Ends what a chat's model reads: the one thing it must do, last, where
 /// small models weigh it most.
 const CHAT_TURN: &str = "Now write {char}'s reply, as {char} only.";
+/// Asks a chat's character to carry on their last reply; `{char}` is
+/// their name. It replaces [`CHAT_TURN`] at the end of the notes.
+const CHAT_CONTINUE: &str =
+    "Continue {char}'s last reply from exactly where it stops, as {char} only. Do not repeat anything already written.";
 /// Opens the cast section of a story's prompt.
 const CAST: &str = "The characters you play. The story state says which of them are in the scene now.";
 /// Opens a character's example dialogue.
@@ -491,6 +498,17 @@ const COMPACT_STORY: &str = "The story is about to outgrow the context window, s
 const SUMMARY_INTRO: &str =
     "Earlier messages were replaced by this summary to fit the context window. Continue from where it leaves off.";
 
+/// What a request asks the model for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Ask {
+    /// The next reply.
+    Reply,
+    /// A summary to replace the history (see [`summary_cut`]).
+    Summary,
+    /// More of a chat's last reply, added to it (see [`Chat::extend`]).
+    More,
+}
+
 /// A request being streamed.
 pub(super) struct ActiveStream {
     pub id: u64,
@@ -511,6 +529,8 @@ pub(super) struct ActiveStream {
     pub charged: Usage,
     /// A story reply wrote text outside its calls (dropped: no narration).
     pub wrote_text: bool,
+    /// For more of a reply: how long it was, which a failure goes back to.
+    pub extends: Option<usize>,
 }
 
 /// A failed request waiting to be sent again.
@@ -519,8 +539,8 @@ pub(super) struct Retry {
     pub at: Instant,
     /// Retries spent, including this one.
     pub attempt: usize,
-    /// It asks for a summary rather than a reply.
-    pub compaction: bool,
+    /// What it asks for.
+    pub ask: Ask,
     /// What went wrong, shown while waiting.
     pub error: String,
 }
@@ -720,6 +740,20 @@ impl Entry {
 }
 
 impl Conversation {
+    /// A chat whose last word is its character's, finished: Continue can
+    /// add to it.
+    pub(super) fn extendable(&self) -> bool {
+        self.is_chat()
+            && self.load == Load::Loaded
+            && !self.busy()
+            && self.entries.last().is_some_and(|e| {
+                e.message.role == Role::Assistant
+                    && !e.message.failed
+                    && !e.message.compaction
+                    && !e.message.content.trim().is_empty()
+            })
+    }
+
     /// The model owes a reply and nothing is on its way: the last prompt or
     /// summary was never answered, because the request failed, was stopped
     /// or the app closed. Continue sends it.
@@ -749,8 +783,8 @@ impl Chat {
         let Some(conversation) = self.find(id) else {
             return;
         };
-        let compaction = context_used(&conversation.entries) > limit;
-        self.start_request(id, compaction, 0, actions);
+        let ask = if context_used(&conversation.entries) > limit { Ask::Summary } else { Ask::Reply };
+        self.start_request(id, ask, 0, actions);
     }
 
     /// Has the model add what the latest turns taught the story to its
@@ -847,15 +881,34 @@ impl Chat {
         }
     }
 
-    /// Adds the entry a request streams into and starts it. `attempt`
-    /// counts the retries already spent on it.
-    fn start_request(&mut self, id: u64, compaction: bool, attempt: usize, actions: &mut Vec<Action>) {
+    /// Carries on the open chat's last reply, when its character's last
+    /// words are the last thing in it: what the model writes next is added
+    /// to that reply.
+    pub(super) fn extend(&mut self, actions: &mut Vec<Action>) {
+        let id = self.current;
+        if self.find(id).is_some_and(|c| c.extendable()) {
+            self.start_request(id, Ask::More, 0, actions);
+        }
+    }
+
+    /// Adds the entry a request streams into (for more of a reply, takes
+    /// the last one) and starts it. `attempt` counts the retries already
+    /// spent on it.
+    fn start_request(&mut self, id: u64, ask: Ask, attempt: usize, actions: &mut Vec<Action>) {
+        let compaction = ask == Ask::Summary;
         let (entry_id, stream_id) = (self.next_id(), self.next_id());
         // A summary is side work, for the background model if it can hold
         // as much as the story's.
         let (model, reasoning) = if compaction { self.summary_model(id) } else { self.request_model(id) };
         let instructions = self.instructions(id);
-        let state = self.state(id);
+        let mut state = self.state(id);
+        if ask == Ask::More
+            && let Some(name) = self.conversations.iter().find(|c| c.id == id).and_then(Conversation::chat_partner)
+        {
+            // The notes end in what to do now: go on, rather than reply.
+            let (turn, more) = (CHAT_TURN.replace("{char}", &name.name), CHAT_CONTINUE.replace("{char}", &name.name));
+            state = state.map(|s| format!("{}{more}", s.strip_suffix(&turn).unwrap_or(&s)));
+        }
         let budget = keep_budget(compact_limit(self.context_window(id)));
         // The story's creativity, as a temperature the model takes; a summary keeps the model's own.
         let creativity = self.conversations.iter().find(|c| c.id == id).map(|c| c.direction.creativity);
@@ -888,7 +941,13 @@ impl Chat {
             };
             history.push(StoredMessage::new(Role::User, ask.to_owned()));
         }
-        conversation.entries.insert(at, Entry::new(entry_id, message));
+        // More of a reply streams into it; anything else into a new entry.
+        let (entry_id, extends) = if let Some(last) = conversation.entries.last().filter(|_| ask == Ask::More) {
+            (last.id, Some(last.message.content.len()))
+        } else {
+            conversation.entries.insert(at, Entry::new(entry_id, message));
+            (entry_id, None)
+        };
         let cancel = Arc::new(AtomicBool::new(false));
         let now = Instant::now();
         conversation.stream = Some(ActiveStream {
@@ -902,6 +961,7 @@ impl Chat {
             incomplete: None,
             charged: Usage::default(),
             wrote_text: false,
+            extends,
         });
         actions.push(Action::SaveSession(conversation.to_session()));
         let job = SendJob {
@@ -977,6 +1037,18 @@ impl Chat {
             // A story has no narrator: what its replies write outside their
             // calls is dropped. A summary is text, though.
             StreamEvent::Text(delta) if story && !message.compaction => stream.wrote_text |= !delta.trim().is_empty(),
+            // More of a reply starts a paragraph of its own after a finished
+            // sentence, and carries on the sentence otherwise.
+            StreamEvent::Text(delta) if stream.extends == Some(message.content.len()) => {
+                let delta = delta.trim_start();
+                if !delta.is_empty() {
+                    let ended = message.content.trim_end().ends_with(['.', '!', '?', '*', '"', '…']);
+                    message.content.truncate(message.content.trim_end().len());
+                    stream.extends = Some(message.content.len());
+                    message.content.push_str(if ended { "\n\n" } else { " " });
+                    message.content.push_str(delta);
+                }
+            }
             StreamEvent::Text(delta) => {
                 // Models often open with blank lines; don't render them.
                 let delta = if message.content.is_empty() { delta.trim_start() } else { &delta };
@@ -1003,9 +1075,12 @@ impl Chat {
                 message.tool_calls =
                     tool_calls.into_iter().map(|call| ToolResult { call, output: String::new() }).collect();
                 entry.streaming_calls.clear();
-                // Failed attempts before this reply are billed with it.
-                message.cost = self.models.iter().find(|m| m.id == stream.model).map_or(0.0, |m| m.cost(usage))
+                // Failed attempts before this reply are billed with it; more
+                // of a reply adds to what it cost.
+                let cost = self.models.iter().find(|m| m.id == stream.model).map_or(0.0, |m| m.cost(usage))
                     + std::mem::take(carried_cost);
+                let usage = if stream.extends.is_some() { message.usage + usage } else { usage };
+                message.cost = if stream.extends.is_some() { message.cost + cost } else { cost };
                 message.model = Some(stream.model.clone());
                 message.usage = usage;
                 stream.incomplete = incomplete;
@@ -1051,8 +1126,12 @@ impl Chat {
         let failure = |code: &str, message: &str| {
             Err(Error::Response { code: Some(code.to_owned()), message: message.to_owned() })
         };
+        let nothing = match active.extends {
+            Some(before) => message.content.len() <= before,
+            None => message.content.is_empty() && message.tool_calls.is_empty(),
+        };
         let result = match (result, active.incomplete.as_deref()) {
-            (Ok(true), incomplete) if message.content.is_empty() && message.tool_calls.is_empty() => match incomplete {
+            (Ok(true), incomplete) if nothing => match incomplete {
                 // It wrote, but not through the characters: tried once more.
                 None if active.wrote_text => failure(
                     NO_TOOL_CALL,
@@ -1154,25 +1233,35 @@ impl Chat {
         // Billed with the next reply, or with the error if none follows.
         conversation.carried_cost += billed;
         let compaction = conversation.entries[index].message.compaction;
-        let can_compact = !compaction && context_used(&conversation.entries) > 0;
-        // Compacting or retrying redoes the request; what streamed is dropped.
+        let ask = match (compaction, active.extends) {
+            (true, _) => Ask::Summary,
+            (false, Some(_)) => Ask::More,
+            (false, None) => Ask::Reply,
+        };
+        let can_compact = ask == Ask::Reply && context_used(&conversation.entries) > 0;
+        // Compacting or retrying redoes the request; what streamed is
+        // dropped (more of a reply goes back to where it was).
+        let drop = |conversation: &mut Conversation| match active.extends {
+            Some(before) => {
+                let entry = &mut conversation.entries[index];
+                entry.message.content.truncate(before);
+                entry.display_key = (usize::MAX, 0, false);
+            }
+            None => _ = conversation.entries.remove(index),
+        };
         if error.is_context_overflow() && can_compact {
-            conversation.entries.remove(index);
-            self.start_request(id, true, 0, actions);
+            drop(conversation);
+            self.start_request(id, Ask::Summary, 0, actions);
             return;
         }
         // A reply that skipped the tools gets one more chance.
         let skipped_tools = error.code() == Some(NO_TOOL_CALL) && active.attempt == 0;
         if (error.is_retryable() || skipped_tools) && active.attempt < MAX_RETRIES {
-            conversation.entries.remove(index);
+            drop(conversation);
             // As long as the server asks, if it says.
             let wait = error.retry_after().unwrap_or(RETRY_DELAYS[active.attempt]);
-            conversation.retry = Some(Retry {
-                at: Instant::now() + wait,
-                attempt: active.attempt + 1,
-                compaction,
-                error: error.to_string(),
-            });
+            conversation.retry =
+                Some(Retry { at: Instant::now() + wait, attempt: active.attempt + 1, ask, error: error.to_string() });
             return;
         }
         let text = if error.is_context_overflow() {
@@ -1184,6 +1273,10 @@ impl Chat {
             error.to_string()
         };
         let cost = std::mem::take(&mut conversation.carried_cost);
+        // More of a reply that failed leaves the reply as it was.
+        if active.extends.is_some() {
+            drop(conversation);
+        }
         let entry = &mut conversation.entries[index];
         entry.keep_streamed_speech();
         if entry.message.content.is_empty() && entry.message.tool_calls.is_empty() {
@@ -1216,7 +1309,7 @@ impl Chat {
             return;
         }
         actions.push(Action::SaveSession(conversation.to_session()));
-        self.start_request(id, false, 0, actions);
+        self.start_request(id, Ask::Reply, 0, actions);
     }
 
     /// Continues a reply that failed or was interrupted.
@@ -1265,7 +1358,7 @@ impl Chat {
         self.notices.retain(|n| n.until > now);
         for c in &self.conversations {
             if let Some(retry) = c.retry.as_ref().filter(|r| r.at <= now) {
-                due.push((c.id, retry.compaction, retry.attempt));
+                due.push((c.id, retry.ask, retry.attempt));
             }
             if let Some(stream) =
                 c.stream.as_ref().filter(|s| now.saturating_duration_since(s.last_event) > IDLE_TIMEOUT)
@@ -1274,8 +1367,8 @@ impl Chat {
                 silent.push((c.id, stream.id));
             }
         }
-        for (id, compaction, attempt) in due {
-            self.start_request(id, compaction, attempt, actions);
+        for (id, ask, attempt) in due {
+            self.start_request(id, ask, attempt, actions);
         }
         for (id, stream) in silent {
             let quiet = Error::Response { code: None, message: "The connection went quiet.".into() };

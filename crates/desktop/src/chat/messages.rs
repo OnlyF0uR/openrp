@@ -7,6 +7,7 @@ use super::stream::MAX_RETRIES;
 use openrp_core::{CastMember, Player, Role};
 
 use super::names::{self, Who};
+use super::partner::{draw_intro, intro_height};
 use super::tools::Part;
 use super::{Chat, Entry, Load, PRIMARY_KEY, ReasoningView, SelPos, model_name, turns, usage_caption};
 use crate::app::Action;
@@ -207,6 +208,8 @@ impl Chat {
         let current = self.current;
         let reasoning_view = self.reasoning_view;
         let models = &self.models;
+        // A chat opens with who it is with, atop its messages.
+        let intro = self.intro();
         let library = &self.library;
         let Some(conversation) = self.conversations.iter_mut().find(|c| c.id == current) else {
             return;
@@ -221,9 +224,18 @@ impl Chat {
                 return;
             }
             Load::Loaded if conversation.entries.is_empty() => {
-                if let Some(partner) = conversation.chat_partner() {
-                    let path = self.library.portrait_path(&partner.portrait).filter(|_| !partner.portrait.is_empty());
-                    draw_hello(p, view, (&partner.name, &partner.color), path.as_deref());
+                if let Some(intro) = intro {
+                    // Nobody wrote yet: who it is with, in the middle, and an invitation.
+                    let height = intro_height(p, width, &intro);
+                    let top = (view.y + (view.h - height) * 0.42).max(view.y + 24.0).round();
+                    let interactive = ui.hovered(view);
+                    let click = draw_intro(p, ui, (x, top, width), &intro, interactive);
+                    let hint = p.layout("Say hello to start the chat.", theme::SMALL, None);
+                    let hint_y = top + height - 36.0 + 18.0;
+                    p.text(&hint, x + (width - hint.width()) * 0.5, hint_y, t.text_faint);
+                    if let Some(click) = click {
+                        self.intro_clicked(click);
+                    }
                     return;
                 }
                 let Some(world) = conversation.world.as_deref().map(|id| self.library.get(Kind::World, id)) else {
@@ -240,6 +252,7 @@ impl Chat {
         let story = conversation.roleplay();
         let partner = conversation.chat_partner().map(|m| m.name.clone());
         let partner = partner.as_deref();
+        let intro_h = intro.as_ref().map_or(0.0, |intro| intro_height(p, width, intro));
         let started = conversation.stream.as_ref().map(|s| s.started);
         // Under the messages: a retry in progress, or the Continue button.
         let retry =
@@ -303,10 +316,11 @@ impl Chat {
             .or_else(|| conversation.greetings())
             .filter(|(_, count)| *count > 1);
         let greeting = conversation.greetings().is_some();
+        let more = conversation.extendable();
         let player = conversation.player.clone();
 
         // Measure everything (layouts are cached) to know the scroll range.
-        let mut content_h = 24.0 + footer_h;
+        let mut content_h = 24.0 + intro_h + footer_h;
         for (index, entry) in conversation.entries.iter_mut().enumerate() {
             let live = live_entry == Some(entry.id);
             content_h += entry_height(
@@ -377,6 +391,11 @@ impl Chat {
         let in_view = view.contains(ui.mouse) && ui.hovered(view);
         let clip = p.push_clip(view);
         let mut y = view.y + 24.0 - self.scroll.round();
+        let mut intro_click = None;
+        if let Some(intro) = intro.as_ref().filter(|_| y + intro_h > view.y) {
+            intro_click = draw_intro(p, ui, (x, y, width), intro, in_view);
+        }
+        y += intro_h;
         let mut targets = Vec::new();
         let mut effects = Effects::default();
         let entry_count = conversation.entries.len();
@@ -401,6 +420,7 @@ impl Chat {
             let actions_for = anchor.filter(|_| !busy && slots.is_empty() && turn_hovered).map(|turn| TurnButtons {
                 edit: editable[index],
                 regen: turn.end == entry_count && regen_ok,
+                more: more && turn.end == entry_count,
                 swipes: swipes.filter(|_| turn.end == entry_count),
             });
             let sel = |doc: u8, d: &Doc| selected_range(selection, index, doc, d);
@@ -770,9 +790,13 @@ impl Chat {
         if effects.resume {
             self.resume(current, actions);
         }
+        if let Some(click) = intro_click {
+            self.intro_clicked(click);
+        }
         match effects.turn {
             Some((TurnClick::Edit, index)) => self.edit_turn(index),
             Some((TurnClick::Regen, ..)) => self.regenerate(actions),
+            Some((TurnClick::More, ..)) => self.extend(actions),
             Some((TurnClick::Swipe(target), ..)) if greeting => self.swipe_greeting(target, actions),
             Some((TurnClick::Swipe(target), ..)) => self.swipe_to(target, actions),
             Some((TurnClick::Delete, index)) => self.delete_turn(index, actions),
@@ -836,6 +860,8 @@ struct TurnButtons {
     edit: bool,
     /// It is the last turn: its prompt can be sent again.
     regen: bool,
+    /// It ends a chat in its character's words: they can say more.
+    more: bool,
     /// The last turn's replies (or the greetings) to swipe between:
     /// (shown, how many).
     swipes: Option<(usize, usize)>,
@@ -846,6 +872,8 @@ struct TurnButtons {
 enum TurnClick {
     Edit,
     Regen,
+    /// Have a chat's character carry on their last reply.
+    More,
     Delete,
     /// Show this reply (from 0) of the last prompt's.
     Swipe(usize),
@@ -859,6 +887,7 @@ fn turn_buttons(p: &mut Painter, ui: &mut Ui, right: f32, y: f32, buttons: &Turn
     let row = [
         (true, TurnClick::Delete, icon::TRASH),
         (buttons.regen, TurnClick::Regen, icon::REFRESH),
+        (buttons.more, TurnClick::More, icon::FORWARD),
         (buttons.edit, TurnClick::Edit, icon::PEN),
     ];
     for (shown, click, glyph) in row {
@@ -1037,29 +1066,6 @@ fn draw_empty(p: &mut Painter, view: Rect, (name, path): (&str, Option<&str>)) {
     let subtitle = "Your story begins here. Say where you are and who you meet: the characters answer, and anyone not cast yet is created.";
     let subtitle = p.layout(subtitle, theme::SMALL, wrap);
     p.text_aligned(&subtitle, cx - subtitle.width() * 0.5, y, Align::Center, subtitle.width(), t.text_muted);
-}
-
-/// The opening of a chat nobody wrote in yet, with someone who has no
-/// greeting: their portrait, ringed in their colour, and an invitation.
-fn draw_hello(p: &mut Painter, view: Rect, (name, color): (&str, &str), path: Option<&str>) {
-    let t = p.theme;
-    let cx = view.x + view.w * 0.5;
-    let side = 132.0;
-    let top = view.y + (view.h * 0.5 - 150.0).max(24.0);
-    let face = Rect::new((cx - side * 0.5).round(), top, side, side);
-    let ink = theme::character_color(&t, name, color);
-    p.shadow(Rect::new(face.x, face.y + 8.0, face.w, face.h), fade(ink, 0.25), side * 0.5, 28.0);
-    portrait(p, path, (name, color), face, side * 0.5);
-    let ring = Rect::new(face.x - 4.0, face.y - 4.0, side + 8.0, side + 8.0);
-    p.bordered(ring, [0.0; 4], ring.w * 0.5, 2.0, fade(ink, 0.8));
-    let wrap = Some((view.w - 64.0).min(460.0));
-    let mut y = face.bottom() + 24.0;
-    let title = p.layout(name, theme::DISPLAY, wrap);
-    p.text_aligned(&title, cx - title.width() * 0.5, y, Align::Center, title.width(), t.text);
-    y += title.height() + 8.0;
-    let hint = format!("Say hello to start the chat. {name} answers in their own voice, and remembers what matters.");
-    let hint = p.layout(&hint, theme::SMALL, wrap);
-    p.text_aligned(&hint, cx - hint.width() * 0.5, y, Align::Center, hint.width(), t.text_muted);
 }
 
 #[cfg(test)]

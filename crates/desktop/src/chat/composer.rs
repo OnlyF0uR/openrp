@@ -42,11 +42,21 @@ pub(super) enum Command {
     Frame,
     /// Has the AI write the user's next message.
     Impersonate,
+    /// Has a chat's character carry on their last reply.
+    Continue,
 }
 
 impl Command {
-    const ALL: [Self; 7] =
-        [Self::Impersonate, Self::Note, Self::Memory, Self::Memorize, Self::Duplicate, Self::Frame, Self::Clear];
+    const ALL: [Self; 8] = [
+        Self::Continue,
+        Self::Impersonate,
+        Self::Note,
+        Self::Memory,
+        Self::Memorize,
+        Self::Duplicate,
+        Self::Frame,
+        Self::Clear,
+    ];
 
     /// What follows the slash.
     pub(super) fn name(self) -> &'static str {
@@ -58,6 +68,7 @@ impl Command {
             Self::Duplicate => "duplicate",
             Self::Frame => "frame",
             Self::Impersonate => "impersonate",
+            Self::Continue => "continue",
         }
     }
 
@@ -71,6 +82,7 @@ impl Command {
             Self::Duplicate => "Copy this story exactly",
             Self::Frame => "New story with this cast and setup",
             Self::Impersonate => "The AI writes your next message",
+            Self::Continue => "They carry on their last reply",
         }
     }
 

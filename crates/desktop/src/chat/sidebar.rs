@@ -120,8 +120,13 @@ impl Chat {
                 let ink = theme::character_color(&t, &partner.name, &partner.color);
                 let ring = Rect::new(face.x - 1.5, face.y - 1.5, face.w + 3.0, face.h + 3.0);
                 p.bordered(ring, [0.0; 4], ring.w * 0.5, 1.0, fade(ink, 0.7));
-                let about = if conversation.title.is_empty() { "New chat" } else { conversation.title.as_str() };
-                (partner.name.as_str(), about)
+                // Under their name, the chat's latest words.
+                let latest = if conversation.load == super::Load::Loaded {
+                    openrp_core::preview(conversation.entries.iter().map(|e| &e.message))
+                } else {
+                    conversation.preview.clone()
+                };
+                (partner.name.as_str(), if latest.is_empty() { "New chat".to_owned() } else { latest })
             } else {
                 // A story nobody named yet is called after its world.
                 let world = conversation.world.as_deref().and_then(|w| self.library.get(Kind::World, w));
@@ -134,7 +139,7 @@ impl Chat {
                 // Its world's picture, as its face.
                 let picture = world.and_then(|w| self.library.portrait_path(&w.portrait));
                 portrait(p, picture.as_deref(), (place.unwrap_or(name), ""), face, 8.0);
-                (name, about)
+                (name, about.to_owned())
             };
 
             // Right side: age, or the session's menu (duplicate, delete) while hovered.
@@ -166,7 +171,7 @@ impl Chat {
             title.truncate(p.fonts, item.w - 48.0 - right_w);
             let bright = if selected { 1.0 } else { 0.4 + 0.6 * hover };
             p.text(&title, item.x + 48.0, item.y + 6.0, mix(t.text_muted, t.text, bright));
-            let mut about = p.layout(about, theme::TINY, None);
+            let mut about = p.layout(&about, theme::TINY, None);
             about.truncate(p.fonts, item.w - 58.0);
             p.text(&about, item.x + 48.0, item.y + 25.0, t.text_faint);
             if hovered {

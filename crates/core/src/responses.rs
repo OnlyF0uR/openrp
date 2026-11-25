@@ -50,6 +50,20 @@ impl Usage {
     }
 }
 
+/// Two requests' counts together, as one reply billed for both.
+impl std::ops::Add for Usage {
+    type Output = Self;
+
+    fn add(self, other: Self) -> Self {
+        Self {
+            input_tokens: self.input_tokens + other.input_tokens,
+            output_tokens: self.output_tokens + other.output_tokens,
+            cached_tokens: self.cached_tokens + other.cached_tokens,
+            cache_write_tokens: self.cache_write_tokens + other.cache_write_tokens,
+        }
+    }
+}
+
 #[expect(clippy::trivially_copy_pass_by_ref, reason = "serde's skip_serializing_if passes a reference")]
 fn is_zero(n: &u64) -> bool {
     *n == 0

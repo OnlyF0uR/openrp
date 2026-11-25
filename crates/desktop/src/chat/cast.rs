@@ -44,10 +44,6 @@ const BANNER_H: f32 = 132.0;
 const TEXT_INSET: f32 = 8.0;
 /// Most lines of the scene the panel shows.
 const SCENE_LINES: f32 = 5.0;
-/// Most lines of a chat partner's description the panel shows.
-const ABOUT_LINES: f32 = 7.0;
-/// Height of a chat partner's picture atop the panel, for its width.
-const PICTURE_ASPECT: f32 = 1.15;
 
 /// What was clicked on a cast member's row.
 #[derive(Clone, Copy)]
@@ -286,7 +282,7 @@ impl Chat {
     /// or by itself when docked.
     pub(super) fn cast_panel(&self, area: Rect) -> Option<(Rect, bool)> {
         let conversation = self.conversations.iter().find(|c| c.id == self.current)?;
-        if !conversation.roleplay() || conversation.load != Load::Loaded {
+        if !conversation.is_story() || conversation.load != Load::Loaded {
             return None;
         }
         let docked = area.w - PANEL_W >= STAGE_MIN;
@@ -319,7 +315,7 @@ impl Chat {
         open: bool,
     ) -> Option<(Rect, bool)> {
         let conversation = self.conversations.iter().find(|c| c.id == self.current)?;
-        if !conversation.roleplay() || conversation.load != Load::Loaded {
+        if !conversation.is_story() || conversation.load != Load::Loaded {
             return None;
         }
         let rect = Rect::new(right - 32.0, bar.y + (bar.h - 32.0) * 0.5, 32.0, 32.0);
@@ -340,7 +336,6 @@ impl Chat {
         let t = p.theme;
         let conversation = self.current();
         let cast = conversation.cast.clone();
-        let partner = conversation.chat_partner().cloned();
         let player = conversation.player.clone();
         let scene = conversation.scene.split_whitespace().collect::<Vec<_>>().join(" ");
         let memories = conversation.memories.len();
@@ -380,110 +375,55 @@ impl Chat {
         let top = body.y + pad - self.cast_scroll.round();
         let mut y = top;
 
-        let (mut edit_scene, mut edit_partner) = (false, false);
-        if let Some(partner) = &partner {
-            // A chat: who it is with, large, and what they are like.
-            let picture = Rect::new(x, y, content_w, (content_w * PICTURE_ASPECT).round());
-            let path = if partner.portrait.is_empty() { None } else { self.library.portrait_path(&partner.portrait) };
-            portrait(p, path.as_deref(), (&partner.name, &partner.color), picture, theme::RADIUS + 2.0);
-            let band = Rect::new(x, picture.bottom() - 56.0, content_w, 56.0);
+        // The world: its picture with its name over it, or its name alone.
+        if let Some(path) = &banner {
+            let rect = Rect::new(x, y, content_w, BANNER_H);
+            portrait(p, Some(path), (&world_name, ""), rect, theme::RADIUS + 2.0);
+            let band = Rect::new(x, rect.bottom() - 38.0, content_w, 38.0);
             let saved = p.push_clip(band);
-            let shade = Rect::new(band.x, band.y, band.w, band.h + 8.0);
-            p.gradient(shade, fade(t.scrim, 0.0), t.scrim, theme::RADIUS + 2.0);
+            p.rect(Rect::new(band.x, band.y - 8.0, band.w, band.h + 8.0), t.scrim, theme::RADIUS + 2.0);
             p.set_clip(saved);
-            let ink = theme::character_color(&t, &partner.name, &partner.color);
-            let style = Style { font: crate::text::FontId::SERIF_BOLD, size: 20.0, line_height: 1.25 };
-            let mut name = p.layout(&partner.name, style, None);
-            name.truncate(p.fonts, content_w - 40.0);
-            let name_y = band.bottom() - 14.0 - name.height();
-            p.rect(Rect::new(band.x + 14.0, name_y + name.height() * 0.5 - 3.0, 6.0, 6.0), ink, 3.0);
-            p.text(&name, band.x + 28.0, name_y, t.on_scrim);
-            p.bordered(picture, [0.0; 4], theme::RADIUS + 2.0, 1.0, fade(ink, 0.5));
-            y = picture.bottom() + 18.0;
-
-            // What they are like, in the story's serif; clicking edits them.
-            y = caption(p, "About", tx, y);
-            let about = partner.description.split_whitespace().collect::<Vec<_>>().join(" ");
-            let (text, style, color) = if about.is_empty() {
-                ("No description yet: click to write who they are.", theme::SMALL, t.text_faint)
-            } else {
-                (about.as_str(), theme::SCENE, t.text_muted)
-            };
-            let layout = p.layout(text, style, Some(content_w - 24.0));
-            let text_h = layout.height().min(layout.line_height() * ABOUT_LINES);
-            let card = Rect::new(x, y, content_w, text_h + 22.0);
-            let hovered = interactive && ui.hovered(card);
-            let hover = ui.anim(id("chat-about"), f32::from(u8::from(hovered)));
-            p.bordered(
-                card,
-                mix(t.surface, t.hover, hover * 0.5),
-                theme::RADIUS,
-                1.0,
-                mix(t.border, t.border_strong, hover),
-            );
-            let saved = p.push_clip(Rect::new(card.x, card.y + 11.0, card.w, text_h));
-            p.text(&layout, card.x + 12.0, card.y + 11.0, color);
-            p.set_clip(saved);
-            if hovered {
-                ui.cursor = CursorIcon::Pointer;
-                edit_partner = ui.clicked(card);
-            }
-            y = card.bottom() + 10.0;
+            let style = Style { font: crate::text::FontId::SERIF_BOLD, ..theme::LABEL };
+            let mut name = p.layout(&world_name, style, None);
+            name.truncate(p.fonts, content_w - 24.0);
+            p.text(&name, band.x + 12.0, band.y + (band.h - name.height()) * 0.5, t.on_scrim);
+            p.bordered(rect, [0.0; 4], theme::RADIUS + 2.0, 1.0, fade(t.border_strong, 0.6));
+            y += BANNER_H + 18.0;
         } else {
-            // The world: its picture with its name over it, or its name alone.
-            if let Some(path) = &banner {
-                let rect = Rect::new(x, y, content_w, BANNER_H);
-                portrait(p, Some(path), (&world_name, ""), rect, theme::RADIUS + 2.0);
-                let band = Rect::new(x, rect.bottom() - 38.0, content_w, 38.0);
-                let saved = p.push_clip(band);
-                p.rect(Rect::new(band.x, band.y - 8.0, band.w, band.h + 8.0), t.scrim, theme::RADIUS + 2.0);
-                p.set_clip(saved);
-                let style = Style { font: crate::text::FontId::SERIF_BOLD, ..theme::LABEL };
-                let mut name = p.layout(&world_name, style, None);
-                name.truncate(p.fonts, content_w - 24.0);
-                p.text(&name, band.x + 12.0, band.y + (band.h - name.height()) * 0.5, t.on_scrim);
-                p.bordered(rect, [0.0; 4], theme::RADIUS + 2.0, 1.0, fade(t.border_strong, 0.6));
-                y += BANNER_H + 18.0;
-            } else {
-                let style = Style { font: crate::text::FontId::SERIF_BOLD, size: 19.0, line_height: 1.3 };
-                let mut name = p.layout(&world_name, style, None);
-                name.truncate(p.fonts, content_w - 2.0 * TEXT_INSET);
-                p.text(&name, tx, y, t.text);
-                y += name.height() + 14.0;
-            }
-
-            // The scene, in the story's serif; clicking it edits it.
-            y = caption(p, "Scene", tx, y);
-            let (text, style, color) = if scene.is_empty() {
-                (
-                    "Not set yet. The AI sets it as the story starts; click to set it yourself.",
-                    theme::SMALL,
-                    t.text_faint,
-                )
-            } else {
-                (scene.as_str(), theme::SCENE, t.text)
-            };
-            let layout = p.layout(text, style, Some(content_w - 24.0));
-            let text_h = layout.height().min(layout.line_height() * SCENE_LINES);
-            let card = Rect::new(x, y, content_w, text_h + 22.0);
-            let hovered = interactive && ui.hovered(card);
-            let hover = ui.anim(id("cast-scene"), f32::from(u8::from(hovered)));
-            p.bordered(
-                card,
-                mix(t.surface, t.hover, hover * 0.5),
-                theme::RADIUS,
-                1.0,
-                mix(t.border, t.border_strong, hover),
-            );
-            let saved = p.push_clip(Rect::new(card.x, card.y + 11.0, card.w, text_h));
-            p.text(&layout, card.x + 12.0, card.y + 11.0, color);
-            p.set_clip(saved);
-            edit_scene = hovered && ui.clicked(card);
-            if hovered {
-                ui.cursor = CursorIcon::Pointer;
-            }
-            y = card.bottom() + 10.0;
+            let style = Style { font: crate::text::FontId::SERIF_BOLD, size: 19.0, line_height: 1.3 };
+            let mut name = p.layout(&world_name, style, None);
+            name.truncate(p.fonts, content_w - 2.0 * TEXT_INSET);
+            p.text(&name, tx, y, t.text);
+            y += name.height() + 14.0;
         }
+
+        // The scene, in the story's serif; clicking it edits it.
+        y = caption(p, "Scene", tx, y);
+        let (text, style, color) = if scene.is_empty() {
+            ("Not set yet. The AI sets it as the story starts; click to set it yourself.", theme::SMALL, t.text_faint)
+        } else {
+            (scene.as_str(), theme::SCENE, t.text)
+        };
+        let layout = p.layout(text, style, Some(content_w - 24.0));
+        let text_h = layout.height().min(layout.line_height() * SCENE_LINES);
+        let card = Rect::new(x, y, content_w, text_h + 22.0);
+        let hovered = interactive && ui.hovered(card);
+        let hover = ui.anim(id("cast-scene"), f32::from(u8::from(hovered)));
+        p.bordered(
+            card,
+            mix(t.surface, t.hover, hover * 0.5),
+            theme::RADIUS,
+            1.0,
+            mix(t.border, t.border_strong, hover),
+        );
+        let saved = p.push_clip(Rect::new(card.x, card.y + 11.0, card.w, text_h));
+        p.text(&layout, card.x + 12.0, card.y + 11.0, color);
+        p.set_clip(saved);
+        let edit_scene = hovered && ui.clicked(card);
+        if hovered {
+            ui.cursor = CursorIcon::Pointer;
+        }
+        y = card.bottom() + 10.0;
 
         // What the story remembers, and how the user directs it.
         let updating = if reviewing { " …" } else { "" };
@@ -522,12 +462,7 @@ impl Chat {
         let (mut clicked, mut anchor) = (None, None);
         let present: Vec<usize> = (0..cast.len()).filter(|&i| cast[i].present).collect();
         let absent: Vec<usize> = (0..cast.len()).filter(|&i| !cast[i].present).collect();
-        let lists = if partner.is_some() {
-            Vec::new()
-        } else {
-            vec![("In the scene", &present, true), ("Elsewhere", &absent, false)]
-        };
-        for (title, members, here) in lists {
+        for (title, members, here) in [("In the scene", &present, true), ("Elsewhere", &absent, false)] {
             if !here && members.is_empty() {
                 continue;
             }
@@ -593,29 +528,15 @@ impl Chat {
         p.set_clip(clip);
         self.cast_content_h = y - top + 8.0;
 
-        // The footer: adding characters (or, in a chat, a fresh one with the
-        // same character), with the list fading out above it.
+        // The footer: adding characters, with the list fading out above it.
         p.gradient(Rect::new(body.x, footer.y - 24.0, body.w, 24.0), fade(t.panel, 0.0), t.panel, 0.0);
         let add = Rect::new(x, footer.bottom() - pad - 36.0, content_w, 36.0);
-        if let Some(partner) = &partner {
-            // A chat with someone no longer in the library can still be edited.
-            let kept = self.library.get(Kind::Character, &partner.id).is_some();
-            let label = if kept { "+  New chat".to_owned() } else { format!("Edit {}", partner.name) };
-            if button(p, ui, add, &label, ButtonStyle::Secondary, true) {
-                if kept {
-                    self.chat_with(&partner.id, true, actions);
-                    return Rect::default();
-                }
-                edit_partner = true;
-            }
-        } else if button(p, ui, add, "+  Add characters", ButtonStyle::Secondary, true) {
+        if button(p, ui, add, "+  Add characters", ButtonStyle::Secondary, true) {
             self.menu = if self.menu == Some(Menu::CastLibrary) { None } else { Some(Menu::CastLibrary) };
             self.menu_scroll = 0.0;
         }
 
-        if edit_partner {
-            self.edit_member(0);
-        } else if edit_scene {
+        if edit_scene {
             self.edit_scene();
         } else if open_memories {
             self.edit_memories();
@@ -963,7 +884,7 @@ mod tests {
             tool_calls: Vec::new(),
             incomplete: None,
         };
-        chat.stream_event(job.conversation, job.stream, openrp_core::StreamEvent::Completed(done));
+        chat.stream_event(job.conversation, job.stream, openrp_core::StreamEvent::Completed(done.clone()));
         chat.stream_end(job.conversation, job.stream, Ok(true), &mut actions);
         let reply = &chat.current().entries.last().unwrap().message;
         assert_eq!((reply.content.as_str(), reply.failed), ("*pours two* On the house.", false));
@@ -976,6 +897,43 @@ mod tests {
         chat.save_turn_edit(&mut actions);
         let reply = &chat.current().entries.last().unwrap().message;
         assert!(reply.content.ends_with("Drink up.") && reply.tool_calls.is_empty());
+
+        // Continue: she carries on her last reply, which the new words join.
+        let length = |chat: &mut Chat| chat.current().entries.len();
+        let before = length(&mut chat);
+        chat.extend(&mut actions);
+        let Some(Action::Send(job)) = actions.pop() else { panic!("not sent") };
+        assert!(job.state.as_deref().is_some_and(|s| s.ends_with("Continue Mira's last reply from exactly where it stops, as Mira only. Do not repeat anything already written.")));
+        let text = |t: &str| openrp_core::StreamEvent::Text(t.to_owned());
+        chat.stream_event(job.conversation, job.stream, text("  "));
+        chat.stream_event(job.conversation, job.stream, text(" *She winks.*"));
+        chat.stream_event(job.conversation, job.stream, openrp_core::StreamEvent::Completed(done.clone()));
+        chat.stream_end(job.conversation, job.stream, Ok(true), &mut actions);
+        let reply = &chat.current().entries.last().unwrap().message;
+        assert_eq!(reply.content, "*pours two* On the house. Drink up.\n\n*She winks.*");
+        assert_eq!((reply.usage.output_tokens, length(&mut chat)), (10, before), "one reply, billed for both");
+
+        // A failed Continue leaves the reply as it was.
+        chat.extend(&mut actions);
+        let Some(Action::Send(job)) = actions.pop() else { panic!("not sent") };
+        chat.stream_event(job.conversation, job.stream, text("Half"));
+        let bad = openrp_core::Error::Response { code: Some("invalid_request_error".into()), message: "no".into() };
+        chat.stream_end(job.conversation, job.stream, Err(bad), &mut actions);
+        let entries = &chat.current().entries;
+        assert!(entries[before - 1].message.content.ends_with("*She winks.*") && entries[before].message.failed);
+        chat.current().entries.pop();
+        chat.current().entries.last_mut().unwrap().message.content = "Hi.".into();
+
+        // The arrows swipe; past the last reply, a new one.
+        chat.swipe_key(true, &mut actions);
+        let Some(Action::Send(job)) = actions.pop() else { panic!("regenerated") };
+        chat.stream_event(job.conversation, job.stream, text("Hello again."));
+        chat.stream_event(job.conversation, job.stream, openrp_core::StreamEvent::Completed(done.clone()));
+        chat.stream_end(job.conversation, job.stream, Ok(true), &mut actions);
+        assert_eq!(chat.current().swipes().map(|(_, shown, count)| (shown, count)), Some((1, 2)));
+        chat.swipe_key(false, &mut actions);
+        assert_eq!(chat.current().swipes().map(|(_, shown, _)| shown), Some(0));
+        assert_eq!(chat.current().entries.last().unwrap().message.content, "Hi.");
 
         // Her character opens this chat again; a fresh one starts another.
         chat.go_home();

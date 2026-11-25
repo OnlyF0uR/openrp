@@ -20,6 +20,7 @@ mod menu;
 mod messages;
 mod names;
 mod notice;
+mod partner;
 mod sidebar;
 #[cfg(test)]
 mod snapshot;
@@ -389,6 +390,8 @@ struct Conversation {
     mode: Mode,
     /// Who a chat is with, from the index, until its cast is read.
     partner: Option<Partner>,
+    /// A chat's latest words, from the index, until its messages are read.
+    preview: String,
     /// Id of the world the story is played in; `None` until Play (or for a
     /// chat, or a plain chat from before worlds).
     world: Option<String>,
@@ -443,6 +446,7 @@ impl Conversation {
             updated: now,
             mode: Mode::Story,
             partner: None,
+            preview: String::new(),
             world: None,
             cast: Vec::new(),
             player: None,
@@ -475,6 +479,7 @@ impl Conversation {
             updated: summary.updated,
             mode: summary.mode,
             partner: summary.partner,
+            preview: summary.preview,
             world: summary.world,
             load: Load::Summary,
             indexed_cost: summary.cost,
@@ -991,7 +996,9 @@ impl Chat {
         if self.page != Page::Chat || self.command_dismissed.as_deref() == Some(text) {
             return Vec::new();
         }
-        Command::matching(text)
+        // Only a chat's character carries on a reply.
+        let chat = self.conversations.iter().any(|c| c.id == self.current && c.is_chat());
+        Command::matching(text).into_iter().filter(|c| chat || *c != Command::Continue).collect()
     }
 
     /// Opens the command menu while commands match and closes it otherwise.
@@ -1030,6 +1037,7 @@ impl Chat {
             Command::Duplicate => self.duplicate(current, false, actions),
             Command::Frame => self.duplicate(current, true, actions),
             Command::Impersonate => self.impersonate(actions),
+            Command::Continue => self.extend(actions),
         }
     }
 
@@ -1607,6 +1615,12 @@ impl Chat {
                 let step = if *key == NamedKey::ArrowUp { commands.len() - 1 } else { 1 };
                 self.command_pick = (self.command_pick.min(commands.len() - 1) + step) % commands.len();
             }
+            // With nothing typed, the arrows swipe the last reply.
+            Key::Named(key @ (NamedKey::ArrowLeft | NamedKey::ArrowRight))
+                if self.composer.text().is_empty() && self.preedit.is_none() && !mods.shift_key() =>
+            {
+                self.swipe_key(*key == NamedKey::ArrowRight, actions);
+            }
             Key::Named(NamedKey::Enter) if mods.shift_key() => self.composer.insert("\n"),
             Key::Named(NamedKey::Enter) => self.send(actions),
             Key::Named(NamedKey::Escape) if self.selection.is_some() => self.selection = None,
@@ -1849,6 +1863,8 @@ impl Chat {
         if let Some((button, clicked)) = self.draw_cast_button(p, ui, (bar, right), cast_open) {
             right = button.x - 16.0;
             toggled = clicked;
+        } else if let Some(start) = self.draw_chat_actions(p, ui, (bar, right), actions) {
+            right = start - 12.0;
         } else {
             right -= 4.0;
         }

@@ -28,6 +28,30 @@ use crate::error::{Error, Result};
 use crate::library::LoreEntry;
 use crate::responses::{Role, Usage};
 
+/// Most characters of a chat's latest words its index entry keeps.
+const PREVIEW_CHARS: usize = 120;
+
+/// The latest words of a chat, as the sidebar shows them under its name:
+/// its last message (`You: ` before the user's) on one line, without
+/// emphasis marks or an out-of-character instruction (`/ooc`); empty when
+/// nothing was said yet.
+#[must_use]
+pub fn preview<'a>(messages: impl DoubleEndedIterator<Item = &'a StoredMessage>) -> String {
+    for message in messages.rev().filter(|m| !m.failed && !m.compaction) {
+        let said = message.content.split("\n/ooc").next().unwrap_or_default();
+        if said.trim_start().starts_with("/ooc") {
+            continue;
+        }
+        let line: String = said.split_whitespace().collect::<Vec<_>>().join(" ");
+        let line: String = line.chars().filter(|c| !matches!(c, '*' | '_' | '`')).take(PREVIEW_CHARS).collect();
+        let line = line.trim();
+        if !line.is_empty() {
+            return if message.role == Role::User { format!("You: {line}") } else { line.to_owned() };
+        }
+    }
+    String::new()
+}
+
 /// Name of the index file. The leading dot keeps it out of session scans,
 /// since `.` is not a valid id character.
 const INDEX_FILE: &str = ".index.json";
@@ -306,6 +330,7 @@ impl Session {
                 portrait: m.portrait.clone(),
                 color: m.color.clone(),
             }),
+            preview: if self.mode == Mode::Chat { preview(self.messages.iter()) } else { String::new() },
             cost: self.cost(),
             tokens: self.tokens(),
         }
@@ -334,6 +359,9 @@ pub struct SessionSummary {
     /// Who a chat is with.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub partner: Option<Partner>,
+    /// A chat's latest words (see [`preview`]).
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub preview: String,
     /// Total spent in USD.
     pub cost: f64,
     /// Total tokens billed.
@@ -1066,6 +1094,20 @@ mod tests {
         message.change = Some(change);
         let json = serde_json::to_string(&message).unwrap();
         assert_eq!(serde_json::from_str::<StoredMessage>(&json).unwrap(), message);
+    }
+
+    #[test]
+    fn chats_preview_their_latest_words() {
+        let say = |role, text: &str| StoredMessage::new(role, text.into());
+        let mut failed = say(Role::Assistant, "boom");
+        failed.failed = true;
+        let messages = [say(Role::Assistant, "*waves*  Hi\nthere."), say(Role::User, "Hey!\n/ooc be nice"), failed];
+        assert_eq!(preview(messages.iter()), "You: Hey!");
+        assert_eq!(preview(messages[..1].iter()), "waves Hi there.");
+        assert_eq!(preview([say(Role::User, "/ooc skip")].iter()), "");
+        let chat = Session { mode: Mode::Chat, messages: messages.to_vec(), ..Session::default() };
+        assert_eq!(chat.summary().preview, "You: Hey!");
+        assert!(Session { messages: messages.to_vec(), ..Session::default() }.summary().preview.is_empty());
     }
 
     #[test]

@@ -168,6 +168,12 @@ pub mod icon {
     pub const MESSAGE: char = '\u{e116}';
     /// An open book (`book-open`): a story in a world.
     pub const BOOK: char = '\u{e05f}';
+    /// An arrow on (`forward`): more of a reply.
+    pub const FORWARD: char = '\u{e229}';
+    /// Sliders (`sliders-horizontal`): how a chat is told.
+    pub const SLIDERS: char = '\u{e29a}';
+    /// A speech bubble with a plus (`message-circle-plus`): a new chat.
+    pub const NEW_CHAT: char = '\u{e567}';
     /// A brain: reasoning.
     pub const BRAIN: char = '\u{e3c6}';
     /// A tick.
@@ -561,6 +567,9 @@ mod tests {
             icon::FOLDER,
             icon::MESSAGE,
             icon::BOOK,
+            icon::FORWARD,
+            icon::SLIDERS,
+            icon::NEW_CHAT,
             icon::PANEL_CLOSE,
             icon::PANEL_OPEN,
             icon::X,

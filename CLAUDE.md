@@ -67,7 +67,9 @@ Everything lives in `~/.openrp/`: `config.toml`, `sessions/<id>.json` + `session
 
 - **Built for small models.** Chats run on weak local models (Gemma-class) as well as Claude, so everything the model must do is kept to the minimum: no tools, plain text replies, a short rule list in second person (`stream::CHAT`), the character's description and example dialogue, the user's persona, then constant lore. Never add a tool, JSON or a required format to a chat; put new behaviour in the app instead.
 - The notes sent after the latest message (`stream::chat_state`: lore in play, memories, direction) end with one line saying what to do now (`CHAT_TURN`), last, where small models weigh it most. Without notes, only that line is sent.
+- One speaker. Others present (a waiter) are described inside the character's actions, never given lines or bubbles of their own; the rules also ask the actions to describe the place and what is going on, so the chat never shrinks to two people in a void.
 - A reply is cleaned at stream end (`tools::chat_text`): a leading `Name:` for the partner is dropped from any line, and it ends where it starts writing the user's lines. Display goes through the same function, so old or streaming text shows the same way.
+- No side panel: the character is introduced atop the messages (`partner.rs`), and Memories, Direction and New chat sit in the header. Continue (`Chat::extend`, `stream::Ask::More`) streams more into the last reply; a failure puts it back as it was.
 - Greetings are plain assistant messages (a story's are speak calls). Memories come only from the review (no `remember` tool); summaries use `COMPACT_CHAT`.
 - A new chat begins at once as the starred persona (or the only one); otherwise it asks who the user is. Opening a character's chat resumes the latest one with them; **New chat** starts another.
 

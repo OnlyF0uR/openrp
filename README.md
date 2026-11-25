@@ -19,15 +19,18 @@ cargo clippy --workspace --all-targets
   Characters page, or **Chat** in their form, or "Chat with …" in Spotlight) opens your latest chat
   with them, or starts one. It begins at once as your starred persona (or your only one), with their
   greeting and its alternates to swipe; without one it first asks who you are. They answer in plain
-  text, in first person with their actions in *asterisks*: no tools and a short, plain prompt, so
-  small local models (Gemma and the like) keep up. Others can be mentioned, but only they speak.
-  What small models add around a reply (their own name in front, a line written for you) is cut
-  away. Everything else works as in a story: bubbles in their colour, Edit, Regenerate, swipes,
-  Write for me, OOC, memories (kept by the review every 8 messages, or `/memorize`), Direction, lore
-  from their card, summaries, export. The panel beside a chat is their profile: their portrait,
-  who they are (click to edit this chat's copy), Memories and Direction, who you are, and **New
-  chat**, which starts another with them and keeps this one. The sidebar lists a chat under their
-  face and name.
+  text, streamed as they write it, in first person with their actions in *asterisks*: no tools and
+  a short, plain prompt, so small local models (Gemma and the like) keep up. Only they speak, but
+  the world around you is alive: their actions describe the place, its atmosphere and what is going
+  on, and anyone else there (a waiter, a passer-by) is described in them too. What small models add
+  around a reply (their own name in front, a line written for you) is cut away. Everything else
+  works as in a story: bubbles in their colour, Edit, Regenerate, swipes, Write for me, OOC,
+  memories (kept by the review every 8 messages, or `/memorize`), Direction, lore from their card,
+  summaries, export. A chat opens with who it is with, atop its messages: their portrait, name and
+  who they are, with **Edit** (this chat's copy of them) and who you are. The header holds
+  **Memories**, **Direction** and **New chat**, which starts another with them and keeps this one.
+  **Continue** (the arrow under their last reply, or `/continue`) has them carry on their last reply.
+  The sidebar lists a chat under their face and name, with its latest words.
 - **Any model** your provider offers, with per-reply token captions (and prices and
   costs, for a provider that lists them). Each story keeps its own model and reasoning effort,
   picked in its **Direction**. While a thinking model works, the reply
@@ -125,6 +128,8 @@ cargo clippy --workspace --all-targets
   Always), so providers cache it with the history after it. What changes every turn (the
   scene, who is in it and who is elsewhere, the lore the latest turns mention, the memories and
   your direction) is sent after your latest message as the story state, and never saved.
+- **Arrow keys**: with nothing typed, ← and → swipe the last reply (or the greeting, before you
+  write); → past the last one asks for a new one.
 - **Edit, Regenerate, swipes, Delete**: hovering a turn (your message and everything that
   answered it) shows them left of Copy. **Edit** makes all of its replies editable at once, a
   box per character bubble under their portrait and name; saving rewrites their speech in the
@@ -281,13 +286,14 @@ cargo clippy --workspace --all-targets
 - `paint.rs`, `ui.rs`, `editor.rs`: drawing API, widgets and input state, text editing.
   `color.rs`: the colour picker.
 - `chat/`: the main screen (sidebar, composer, messages, menus); `chat/home.rs` is Home;
+  `chat/partner.rs` shows a chat's character (the introduction atop it, its header actions);
   `chat/stream.rs` streams replies, builds the story and chat prompts, retries failed requests and
   compacts long conversations.
 - `spotlight.rs`, `settings.rs`, `login.rs`: the other surfaces.
 - `library.rs`: the Worlds, Characters and Personas pages (a grid of picture cards; filter, tags, favourites, card import), their
   form with its sections (greetings, example dialogue, lore) and portraits.
-- `chat/cast.rs`: Play and chats with a character (`Chat::chat_with`), the cast panel (a chat
-  partner's profile in a chat) and the system prompt and state (built in `chat/stream.rs`); `chat/dialog.rs`: the form asking who you play, and the dialogs for cast
+- `chat/cast.rs`: Play and chats with a character (`Chat::chat_with`), a story's cast panel and
+  the system prompt and state (built in `chat/stream.rs`); `chat/dialog.rs`: the form asking who you play, and the dialogs for cast
   members, the scene, the direction and memories; `chat/tools.rs`: the `speak`,
   `create_character`, `update_character` and `remember` tools, how they show, and parsing
   their arguments while they stream; `chat/names.rs`: telling characters apart by name;
@@ -322,8 +328,8 @@ lives in `~/.openrp/`:
 - `sessions/<id>.json`: one file per story or chat (`mode`: a chat's cast is the one character
   it is with), with its world, your character, its cast (copies),
   its scene, memories, model and effort, and direction (creativity, length, note), each reply's tool calls, and each reply's tokens and cost at the
-  prices of the time. `.index.json` next to them holds titles, totals and who a chat is with,
-  so startup reads only the index; a session's messages load when it is opened.
+  prices of the time. `.index.json` next to them holds titles, totals, and who a chat is with and
+  its latest words, so startup reads only the index; a session's messages load when it is opened.
 - `worlds/<id>.json`, `characters/<id>.json` and `personas/<id>.json`: one file per world,
   character or persona, with its tags and star (and the lore of worlds and characters, and a
   character's greetings and example dialogue).
