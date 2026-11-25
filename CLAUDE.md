@@ -26,6 +26,7 @@ The goal is an app that looks good, is elegant, and feels instant: modern, quiet
 
 - The shell: the app draws its own title bar (`titlebar.rs`, `theme::TITLE_HEIGHT`): the window is undecorated on Windows and Linux, whose buttons, drag strip and resize edges the app handles (`titlebar::grab` takes presses before the page sees them); macOS keeps its traffic lights over a transparent bar. Below it the sidebar and a docked cast panel sit on the window (`Palette::panel`); the page floats between them on a rounded canvas (`Palette::bg`, `theme::CANVAS_RADIUS`, inset by `theme::GAP`; `chat::canvas` and `chat::frame`, which rounds its corners over whatever was drawn into them). Floating surfaces (menus, dialogs, pickers, Spotlight) use `Palette::surface` with a soft shadow, over `Palette::scrim` when they take the whole screen; the settings are such a modal (`ui::modal`, opened over any page by `Chat::settings_open`), their rows `ui::row`. Lists scroll with `ui::Scroll`, which eases and never overshoots. Edit in place rather than in a dialog where it is one field (the story's title in the header).
 - Colours and sizes live in `theme.rs`. Colours come from the active `Palette` (`p.theme`), never hard-coded, so every scheme (Black default, White, Amber) keeps working. Retired scheme keys map to the nearest one (`Scheme::from_key`).
+- Home (`chat/home.rs`) is what a new conversation shows: characters to chat with and worlds to play, as picture tiles. A click is the main action everywhere: a character chats (`Chat::chat_with`), a world plays; Edit shows on hover.
 - The brand is the RP mark (`logo.rs`, drawn with `Painter::logo`), on its dark tile wherever it stands for the app (`ui::logo`: the title bar, the connect and empty screens). The app icon and `branding/` are drawn from it: `OPENRP_ICON=assets/icon cargo test -p openrp icon -- --ignored`.
 - Icons come from the Lucide font (`FontId::ICON`): named in `ui::icon`, drawn with `icon::draw` or `ui::icon_button`. Add a glyph by its codepoint from `lucide-static`'s `font/lucide.css`; the icon test checks every one resolves.
 - The story reads like a book: prose in Literata (`theme::PROSE`). Every character has a colour of their own (`theme::character_color`: the `#rrggbb` picked in `color.rs`, its lightness moved only as far as the scheme needs, `theme::legible`; or, when empty, an OKLCH hue from their name), on their name, portrait ring, bubble and initial.
@@ -44,6 +45,7 @@ The goal is an app that looks good, is elegant, and feels instant: modern, quiet
 
 Everything lives in `~/.openrp/`: `config.toml`, `sessions/<id>.json` + `sessions/.index.json`, `worlds/`, `characters/`, `personas/`, `portraits/`, `desktop.log`, `desktop-crash.log`, `desktop.lock` (one running copy).
 
+- A session's `mode` is `story` (default: a world and a cast; without a world, a plain chat from before worlds) or `chat` (one character, `cast[0]`; the index keeps them as `partner` for the sidebar). `Conversation::roleplay()` means told through characters (bubbles), `is_story()` means the tool protocol.
 - Sessions, worlds and characters carry a format `version`: bump it (and upgrade older files in `Session::upgrade`) when the meaning of a field changes. Files from a newer version are never saved over.
 - Unknown config lines are kept and written back. Old `token`/`provider` lines (a sign-in that is gone) are dropped.
 - Another app also uses `~/.openrp/`: keep file names distinct from its.
@@ -60,6 +62,14 @@ Everything lives in `~/.openrp/`: `config.toml`, `sessions/<id>.json` + `session
 - A `401` (`Error::is_unauthorized`) forgets the key and returns to the connect screen with the address filled in. `WorkerEvent::Models` carries the connection it was asked for, so a stale list is dropped. The provider can't change while a reply streams.
 - Temperature: only Chat Completions gets one, from the story's creativity (`stream::temperature`), and not when the model's listed `supported_parameters` leave it out. Never send one on the Messages API: current Claude models answer 400.
 - Costs show only when non-zero (few providers list prices in the shape `Model` reads).
+
+## How a chat works
+
+- **Built for small models.** Chats run on weak local models (Gemma-class) as well as Claude, so everything the model must do is kept to the minimum: no tools, plain text replies, a short rule list in second person (`stream::CHAT`), the character's description and example dialogue, the user's persona, then constant lore. Never add a tool, JSON or a required format to a chat; put new behaviour in the app instead.
+- The notes sent after the latest message (`stream::chat_state`: lore in play, memories, direction) end with one line saying what to do now (`CHAT_TURN`), last, where small models weigh it most. Without notes, only that line is sent.
+- A reply is cleaned at stream end (`tools::chat_text`): a leading `Name:` for the partner is dropped from any line, and it ends where it starts writing the user's lines. Display goes through the same function, so old or streaming text shows the same way.
+- Greetings are plain assistant messages (a story's are speak calls). Memories come only from the review (no `remember` tool); summaries use `COMPACT_CHAT`.
+- A new chat begins at once as the starred persona (or the only one); otherwise it asks who the user is. Opening a character's chat resumes the latest one with them; **New chat** starts another.
 
 ## How a story works
 

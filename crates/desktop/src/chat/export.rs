@@ -20,11 +20,20 @@ enum Line {
 /// What `session` shows, in order; `player` speaks for the user.
 fn lines(session: &Session, player: &str) -> Vec<Line> {
     let mut lines = Vec::new();
+    let partner = session.partner().map(|m| m.name.as_str());
     for message in session.messages.iter().filter(|m| !m.failed && !m.compaction) {
         if message.role == Role::User {
             let said = tools::spoken(&message.content);
             if !said.is_empty() {
                 lines.push(Line::Said(player.to_owned(), said));
+            }
+            continue;
+        }
+        // A chat's replies are its partner's plain text.
+        if let Some(partner) = partner {
+            let said = tools::chat_text(&message.content, partner, None);
+            if !said.is_empty() {
+                lines.push(Line::Said(partner.to_owned(), said));
             }
             continue;
         }
@@ -52,7 +61,9 @@ fn lines(session: &Session, player: &str) -> Vec<Line> {
 pub fn text(session: &Session, world: &str) -> String {
     let player = session.player.as_ref().map_or("You", |p| p.name.as_str());
     let mut out = if session.title.is_empty() { "Untitled story".to_owned() } else { session.title.clone() };
-    if !world.is_empty() {
+    if let Some(partner) = session.partner() {
+        let _ = write!(out, "\nA chat with {}, as {player}.", partner.name);
+    } else if !world.is_empty() {
         let _ = write!(out, "\nIn {world}, played as {player}.");
     }
     for line in lines(session, player) {
@@ -87,6 +98,25 @@ mod tests {
         assert_eq!(
             text,
             "The Lantern\nIn Ard, played as Gale.\n\nMira: *wipes a glass* What'll it be?\n\nGale: Ale.\n"
+        );
+    }
+
+    #[test]
+    fn chats_export_as_text() {
+        let mira = openrp_core::CastMember { name: "Mira".into(), ..openrp_core::CastMember::default() };
+        let session = Session {
+            mode: openrp_core::Mode::Chat,
+            cast: vec![mira],
+            player: Some(Player { name: "Gale".into(), ..Player::default() }),
+            messages: vec![
+                StoredMessage::new(Role::Assistant, "*waves* Hi.".into()),
+                StoredMessage::new(Role::User, "Hey.".into()),
+            ],
+            ..Session::default()
+        };
+        assert_eq!(
+            text(&session, ""),
+            "Untitled story\nA chat with Mira, as Gale.\n\nMira: *waves* Hi.\n\nGale: Hey.\n"
         );
     }
 }

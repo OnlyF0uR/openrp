@@ -213,8 +213,13 @@ impl Chat {
             let invite = "Out of character: tell the AI what you want";
             p.label(invite, theme::BODY, origin.0, origin.1, t.text_faint);
         } else if shown.is_empty() {
-            let invite = if self.current().world.is_some() { "What do you do?" } else { "Message OpenRP" };
-            let width = p.label(invite, theme::BODY, origin.0, origin.1, t.text_faint);
+            let conversation = self.current();
+            let invite = match conversation.chat_partner() {
+                Some(partner) => format!("Message {}", partner.name),
+                None if conversation.world.is_some() => "What do you do?".to_owned(),
+                None => "Message OpenRP".to_owned(),
+            };
+            let width = p.label(&invite, theme::BODY, origin.0, origin.1, t.text_faint);
             let commands = p.layout("/ for commands", theme::BODY, None);
             p.text(&commands, origin.0 + width + 12.0, origin.1, fade(t.text_faint, 0.55));
         } else {

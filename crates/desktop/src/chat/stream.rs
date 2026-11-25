@@ -121,6 +121,25 @@ const ROLEPLAY: &str = "You play every character in an interactive roleplay stor
     empty. Cast members who stay behind or walk off go in leave.\n\
     - When something happens that must not be forgotten (a promise, a secret revealed, a decision, an injury, a changed \
     relationship), call remember in the same reply.";
+/// How the model plays a chat's one character. Plain and short on purpose:
+/// chats run on small models too, which follow a few clear rules best.
+/// `{char}` and `{user}` are the two names.
+const CHAT: &str = "You are {char}. You are in a private one-on-one roleplay chat with {user}. Write {char}'s next reply.\n\n\
+    Rules:\n\
+    - Write only as {char}: what {char} says and does. Never write {user}'s words, actions or thoughts.\n\
+    - Write in first person. Put actions in *asterisks*. Write speech as plain text, with no name in front.\n\
+    - React to what {user} just said or did, then give {user} something to answer: a question, a choice, a feeling or a move of \
+    your own.\n\
+    - Stay true to {char}'s personality, voice and history below. {char} has their own wants and moods, and can disagree, tease \
+    or refuse.\n\
+    - Other people can be mentioned, but only {char} speaks in this chat.\n\
+    - Never repeat an earlier reply or {user}'s message. Show feelings through actions and words; avoid stock phrases.\n\
+    - Text marked OOC is {user}'s instruction to you, the writer: follow it, but {char} does not hear it.";
+/// Opens the notes sent with a chat's latest message, when there are any.
+const CHAT_STATE: &str = "[Chat notes, kept by the app: not part of the message above]";
+/// Ends what a chat's model reads: the one thing it must do, last, where
+/// small models weigh it most.
+const CHAT_TURN: &str = "Now write {char}'s reply, as {char} only.";
 /// Opens the cast section of a story's prompt.
 const CAST: &str = "The characters you play. The story state says which of them are in the scene now.";
 /// Opens a character's example dialogue.
@@ -176,14 +195,17 @@ fn creativity_text(creativity: Creativity) -> Option<&'static str> {
     }
 }
 
-/// What the story's length asks of every reply; `None` at the default.
-fn length_text(length: Length) -> Option<&'static str> {
-    match length {
-        Length::Short => Some("Keep replies short: a line or two from whoever matters most."),
-        Length::Medium => None,
-        Length::Long => {
+/// What the story's length asks of every reply; `None` at the default. A
+/// `chat` has one speaker, so it counts in sentences.
+fn length_text(length: Length, chat: bool) -> Option<&'static str> {
+    match (length, chat) {
+        (Length::Medium, _) => None,
+        (Length::Short, false) => Some("Keep replies short: a line or two from whoever matters most."),
+        (Length::Short, true) => Some("Keep replies short: one to three sentences."),
+        (Length::Long, false) => {
             Some("Give replies room: several messages, fuller actions, and the scene carried through a whole beat.")
         }
+        (Length::Long, true) => Some("Give replies room: a few paragraphs of action and speech."),
     }
 }
 
@@ -346,16 +368,75 @@ pub(super) fn story_state(
             let _ = write!(state, "\n- {memory}");
         }
     }
+    let _ = write!(state, "{}", direction_section((direction, note), false));
+    state
+}
+
+/// The user's direction as a section of what the model reads last
+/// (creativity, length, then their note); empty when it says nothing.
+fn direction_section((direction, note): (Direction, &str), chat: bool) -> String {
     let note = note.trim();
-    let lines: Vec<&str> = [creativity_text(direction.creativity), length_text(direction.length)]
+    let lines: Vec<&str> = [creativity_text(direction.creativity), length_text(direction.length, chat)]
         .into_iter()
         .flatten()
         .chain((!note.is_empty()).then_some(note))
         .collect();
-    if !lines.is_empty() {
-        let _ = write!(state, "\n\n# Direction\n\n{DIRECTION}\n\n{}", lines.join("\n\n"));
+    if lines.is_empty() { String::new() } else { format!("\n\n# Direction\n\n{DIRECTION}\n\n{}", lines.join("\n\n")) }
+}
+
+/// The system prompt of a chat with `partner`, played by `player`, in
+/// `world` if it has one: the rules, who the partner is and how they talk,
+/// who the user is, and the lore that always holds. Like a story's, it
+/// holds only what rarely changes, so providers can cache it.
+pub(super) fn chat_prompt(partner: &CastMember, player: Option<&Player>, world: Option<WorldText<'_>>) -> String {
+    let (name, user) = (partner.name.as_str(), player.map_or("the user", |p| p.name.as_str()));
+    let fill = |text: &str| macros(text, Some(name), user).into_owned();
+    let mut prompt = CHAT.replace("{char}", name).replace("{user}", user);
+    let description = if partner.description.trim().is_empty() { UNDESCRIBED } else { &partner.description };
+    let _ = write!(prompt, "\n\n# {name}\n\n{}{}", formerly(&partner.aliases), fill(description));
+    let examples = examples(&partner.examples);
+    if !examples.is_empty() {
+        let _ = write!(prompt, "\n\n# How {name} talks\n\n{EXAMPLES}\n\n{}", fill(&examples));
     }
-    state
+    if let Some(player) = player.filter(|p| !p.description.trim().is_empty()) {
+        let _ = write!(prompt, "\n\n# {user}\n\n{}{}", formerly(&player.aliases), fill(&player.description));
+    }
+    let lore = world.map_or(&[][..], |(_, _, lore)| lore);
+    if let Some((world, description, _)) = world.filter(|(_, d, _)| !d.trim().is_empty()) {
+        let _ = write!(prompt, "\n\n# The world: {world}\n\n{}", fill(description));
+    }
+    let always: Vec<String> = lore_of(lore, std::slice::from_ref(partner))
+        .filter(|(_, e)| e.constant)
+        .map(|(_, e)| fill(&e.content))
+        .collect();
+    if !always.is_empty() {
+        let _ = write!(prompt, "\n\n# Background\n\n{LORE_ALWAYS}\n\n{}", always.join("\n\n"));
+    }
+    prompt.trim_end().to_owned()
+}
+
+/// What a chat with `partner` sends after the latest message: the `lore`
+/// the latest turns call for, the `memories`, the user's `direction` and
+/// note, then what to do now, last, so even small models keep to it.
+pub(super) fn chat_state(
+    partner: &str,
+    lore: &[String],
+    memories: &[String],
+    (direction, note): (Direction, &str),
+) -> String {
+    let mut notes = String::new();
+    if !lore.is_empty() {
+        let _ = write!(notes, "\n\n# Background\n\n{LORE}\n\n{}", lore.join("\n\n"));
+    }
+    if !memories.is_empty() {
+        let _ = write!(notes, "\n\n# Memories\n\n{MEMORIES}\n");
+        for memory in memories {
+            let _ = write!(notes, "\n- {memory}");
+        }
+    }
+    notes.push_str(&direction_section((direction, note), true));
+    let turn = CHAT_TURN.replace("{char}", partner);
+    if notes.is_empty() { turn } else { format!("{CHAT_STATE}{notes}\n\n{turn}") }
 }
 
 /// Adds the story `state` to the end of what the model reads last: the
@@ -393,6 +474,12 @@ const COMPACT_PROMPT: &str = "The conversation is about to exceed the context wi
     summary that you write now; the next turn sees only the summary. Write it as a handoff to yourself: the user's requests and \
     constraints (quote them where the wording matters); key facts, events and decisions so far; open threads; and where things \
     stand now. Be specific: names, places, details. Reply with the summary only.";
+/// Asks for the summary that replaces a chat's earlier turns.
+const COMPACT_CHAT: &str = "The chat is about to outgrow the context window, so the messages above will be replaced by a summary \
+    that you write now (the latest messages stay word for word after it). Write it for yourself, to carry on as if you remembered \
+    everything: what happened and was said, in order, with names, places and details; what the two know about each other and how \
+    they feel about each other now; promises, secrets and open threads; and how the character speaks. Leave out what the memories \
+    already hold. Reply with the summary only, as plain text.";
 /// Asks for the summary that replaces a story's earlier turns.
 const COMPACT_STORY: &str = "The story is about to outgrow the context window, so the turns above will be replaced by a summary \
     that you write now (the latest turns stay word for word after it). Write it for yourself, to carry on the roleplay as if you \
@@ -677,7 +764,7 @@ impl Chat {
         let Some(conversation) = self.conversations.iter().find(|c| c.id == id) else {
             return;
         };
-        if conversation.world.is_none() || conversation.load != Load::Loaded || conversation.reviewing.is_some() {
+        if !conversation.roleplay() || conversation.load != Load::Loaded || conversation.reviewing.is_some() {
             return;
         }
         let from = first_unread(&conversation.entries, conversation.reviewed);
@@ -693,7 +780,8 @@ impl Chat {
             .map(|w| (w.name.as_str(), w.description.as_str()));
         let cast: Vec<&str> = conversation.cast.iter().map(|m| m.name.as_str()).collect();
         let player = conversation.player.as_ref().map_or("The user", |p| p.name.as_str());
-        let transcript = tools::transcript(&unread, player, REVIEW_CHARS);
+        let partner = conversation.chat_partner().map(|m| m.name.as_str());
+        let transcript = tools::transcript(&unread, player, partner, REVIEW_CHARS);
         let instructions = tools::reviewer_prompt(
             world,
             conversation.player.as_ref().map(|p| p.name.as_str()),
@@ -791,7 +879,13 @@ impl Chat {
             let cut = summary_cut(&history, at, budget);
             message.kept = at - cut;
             history.truncate(cut);
-            let ask = if conversation.world.is_some() { COMPACT_STORY } else { COMPACT_PROMPT };
+            let ask = if conversation.is_chat() {
+                COMPACT_CHAT
+            } else if conversation.world.is_some() {
+                COMPACT_STORY
+            } else {
+                COMPACT_PROMPT
+            };
             history.push(StoredMessage::new(Role::User, ask.to_owned()));
         }
         conversation.entries.insert(at, Entry::new(entry_id, message));
@@ -818,17 +912,20 @@ impl Chat {
             instructions,
             history,
             state,
-            tools: conversation.world.is_some(),
+            tools: conversation.is_story(),
             // A story is told only through its characters, so a reply must
             // call a tool, and a repair must describe who acted undescribed;
             // a summary calls none, though tools stay declared (providers
-            // reject tool history without them).
-            tool_choice: if compaction {
+            // reject tool history without them). A chat has no tools: its
+            // character answers in plain text.
+            tool_choice: if !conversation.is_story() {
+                None
+            } else if compaction {
                 Some(ToolChoice::None)
             } else if conversation.repairing {
                 Some(ToolChoice::Function(tools::CREATE_CHARACTER))
             } else {
-                conversation.world.is_some().then_some(ToolChoice::Required)
+                Some(ToolChoice::Required)
             },
             temperature,
             cancel,
@@ -852,7 +949,7 @@ impl Chat {
         let Some(conversation) = Self::stream_target(&mut self.conversations, conversation, stream) else {
             return;
         };
-        let story = conversation.world.is_some();
+        let story = conversation.is_story();
         let Conversation { stream: Some(stream), entries, carried_cost, .. } = conversation else {
             return;
         };
@@ -942,6 +1039,13 @@ impl Chat {
         let Some(index) = target.entries.iter().position(|e| e.id == active.entry) else {
             return false;
         };
+        // A chat's reply is its character's words alone: what small models
+        // add around them (their name, the user's next line) goes.
+        let names = target.chat_partner().map(|m| m.name.clone()).zip(target.player.as_ref().map(|p| p.name.clone()));
+        let message = &mut target.entries[index].message;
+        if let Some((partner, player)) = names.filter(|_| !message.compaction && result.is_ok()) {
+            message.content = tools::chat_text(&message.content, &partner, Some(&player));
+        }
         let message = &target.entries[index].message;
         // `server_error` and a missing code are retried; `incomplete` is not.
         let failure = |code: &str, message: &str| {

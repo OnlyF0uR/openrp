@@ -164,6 +164,10 @@ pub mod icon {
 
     /// Arrow pointing up: send.
     pub const ARROW_UP: char = '\u{e04a}';
+    /// A speech bubble (`message-circle`): a chat with a character.
+    pub const MESSAGE: char = '\u{e116}';
+    /// An open book (`book-open`): a story in a world.
+    pub const BOOK: char = '\u{e05f}';
     /// A brain: reasoning.
     pub const BRAIN: char = '\u{e3c6}';
     /// A tick.
@@ -555,6 +559,8 @@ mod tests {
             icon::CHART,
             icon::PLUG,
             icon::FOLDER,
+            icon::MESSAGE,
+            icon::BOOK,
             icon::PANEL_CLOSE,
             icon::PANEL_OPEN,
             icon::X,

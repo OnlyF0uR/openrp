@@ -4,7 +4,10 @@
 
 use std::path::{Path, PathBuf};
 
-use openrp_core::{CastMember, Player, Portraits, Role, Session, StoredMessage, ToolCall, ToolResult, Usage, World};
+use openrp_core::{
+    CastMember, Character, Mode, Persona, Player, Portraits, Role, Session, StoredMessage, ToolCall, ToolResult, Usage,
+    World,
+};
 use serde_json::json;
 
 use super::{Chat, Menu, Page, Reasoning, tools};
@@ -28,6 +31,9 @@ fn snapshots() {
     std::fs::create_dir_all(&dir).expect("snapshot folder");
     let (w, h) = (96, 60);
     write_png(&dir.join("world.png"), (w, h), &dusk(w, h));
+    for (name, top, bottom) in PEOPLE {
+        write_png(&dir.join(format!("{name}.png")), (60, 80), &gradient((60, 80), top, bottom));
+    }
     let fonts = Fonts::load();
     for scheme in Scheme::ALL {
         let mut settings = story(&dir);
@@ -67,8 +73,16 @@ fn snapshots() {
         let mut form = story(&dir);
         form.page = Page::Library(Kind::World);
         form.library.open_form(Kind::World, "w");
+        let mut characters = home(&dir);
+        characters.show(Page::Library(Kind::Character));
+        let mut hello = home(&dir);
+        hello.chat_with("tobin", true, &mut Vec::new());
         let screens = vec![
             ("empty", Chat::new(None, Reasoning::Auto, Vec::new())),
+            ("home", home(&dir)),
+            ("characters", characters),
+            ("chat", chat(&dir)),
+            ("hello", hello),
             ("story", story(&dir)),
             ("settings", settings),
             ("worlds", worlds),
@@ -155,6 +169,7 @@ fn story(dir: &Path) -> Chat {
         title: "The heron letter".into(),
         created: 1,
         updated: 2,
+        mode: Mode::Story,
         world: Some("w".into()),
         cast: vec![
             member("m", "Mira Vale", "A lantern-maker with ink-stained hands.", true),
@@ -206,6 +221,122 @@ fn story(dir: &Path) -> Chat {
     chat.open(id, &mut Vec::new());
     chat.session_loaded(id, Ok(session), &mut Vec::new());
     chat
+}
+
+/// Portraits drawn for the snapshots: a file name and its gradient.
+const PEOPLE: [(&str, [f32; 3], [f32; 3]); 4] = [
+    ("mira", [92.0, 54.0, 70.0], [214.0, 160.0, 128.0]),
+    ("tobin", [40.0, 64.0, 70.0], [150.0, 190.0, 170.0]),
+    ("sefa", [30.0, 30.0, 60.0], [120.0, 130.0, 220.0]),
+    ("wren", [70.0, 60.0, 40.0], [210.0, 190.0, 140.0]),
+];
+
+/// The library the chat snapshots draw from: characters with portraits
+/// (one starred), a world and a starred persona.
+fn library(chat: &mut Chat, dir: &Path) {
+    let character = |id: &str, name: &str, description: &str, portrait: &str, favorite| Character {
+        id: id.into(),
+        name: name.into(),
+        description: description.into(),
+        portrait: portrait.into(),
+        favorite,
+        ..Character::default()
+    };
+    let characters = vec![
+        character(
+            "mira",
+            "Mira Vale",
+            "A lantern-maker with ink-stained hands and a sharp tongue, who keeps the city's secrets folded into paper.",
+            "mira.png",
+            true,
+        ),
+        character(
+            "tobin",
+            "Tobin Ashe",
+            "A retired duellist who keeps the tea stall and pretends not to listen.",
+            "tobin.png",
+            false,
+        ),
+        character("sefa", "Sefa Lind", "A star-chart thief with a conscience she resents.", "sefa.png", false),
+        character("oren", "Oren", "The harbourmaster.", "", false),
+    ];
+    let worlds = vec![
+        World { id: "w".into(), name: "Lanternfall".into(), portrait: "world.png".into(), ..World::default() },
+        World { id: "v".into(), name: "The Glass Steppe".into(), ..World::default() },
+    ];
+    let wren = Persona {
+        id: "p".into(),
+        name: "Wren".into(),
+        description: "A courier new to the city.".into(),
+        portrait: "wren.png".into(),
+        favorite: true,
+        ..Persona::default()
+    };
+    chat.library_loaded(worlds, characters, vec![wren], Portraits::at(dir.to_path_buf()));
+}
+
+/// The home screen, with a library to choose from and a chat behind it.
+fn home(dir: &Path) -> Chat {
+    let mut chat = Chat::new(Some("claude-opus-5-5".into()), Reasoning::Auto, vec![chat_session().summary()]);
+    library(&mut chat, dir);
+    chat
+}
+
+/// A chat with Mira, a few messages in.
+fn chat_session() -> Session {
+    let reply = |text: &str| {
+        let mut message = StoredMessage::new(Role::Assistant, text.into());
+        message.model = Some("gemma-4".into());
+        message.usage = Usage::new(980, 140);
+        message
+    };
+    Session {
+        version: Session::VERSION,
+        id: "c".into(),
+        title: "You fixed the blue one?".into(),
+        created: 1,
+        updated: 3,
+        mode: Mode::Chat,
+        cast: vec![CastMember {
+            id: "mira".into(),
+            name: "Mira Vale".into(),
+            description: "A lantern-maker with ink-stained hands and a sharp tongue, who keeps the city's secrets folded into paper.".into(),
+            portrait: "mira.png".into(),
+            present: true,
+            ..CastMember::default()
+        }],
+        player: Some(Player { name: "Wren".into(), portrait: "wren.png".into(), ..Player::default() }),
+        memories: vec!["Wren promised to bring Mira a heron feather.".into()],
+        model: "gemma-4".into(),
+        messages: vec![
+            reply("*glances up from a half-folded lantern, a smudge of ink on her cheek* Back again, Wren? The rain usually keeps couriers away."),
+            StoredMessage::new(Role::User, "\"You fixed the blue one?\" *I nod at the lantern by the door.* (keep her a little guarded)".into()),
+            reply("*follows your gaze and her mouth twitches* Fixed is a strong word. I convinced it to stop sulking.\n\n*She sets the paper down.* You didn't come out in this weather to admire my repairs. What do you need?"),
+        ],
+        ..Session::default()
+    }
+}
+
+/// A chat with one character, open, with their profile in the panel.
+fn chat(dir: &Path) -> Chat {
+    let mut chat = home(dir);
+    let id = chat.conversations.iter().find(|c| c.session_id == "c").map(|c| c.id).expect("the chat is listed");
+    chat.open(id, &mut Vec::new());
+    chat.session_loaded(id, Ok(chat_session()), &mut Vec::new());
+    chat
+}
+
+/// A vertical gradient from `top` to `bottom`, `w` by `h`.
+fn gradient((w, h): (u32, u32), top: [f32; 3], bottom: [f32; 3]) -> Vec<u8> {
+    let mut pixels = Vec::with_capacity((w * h * 4) as usize);
+    for y in 0..h {
+        let t = y as f32 / h as f32;
+        for _ in 0..w {
+            pixels.extend(top.iter().zip(bottom).map(|(a, b)| (a + (b - a) * t) as u8));
+            pixels.push(255);
+        }
+    }
+    pixels
 }
 
 /// A dusk sky, violet above and amber at the horizon: a world's picture.

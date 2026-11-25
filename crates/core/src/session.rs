@@ -78,6 +78,37 @@ pub enum Length {
     Medium,
 }
 
+/// What kind of conversation a session is.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Mode {
+    /// A chat with one character, who answers in plain text: the cast holds
+    /// only them, and no tools are offered, so even small models keep up.
+    Chat,
+    /// A story in a world, told by a cast through tools (or, without a
+    /// world, a plain chat from before worlds). Last: what is not known
+    /// reads as it.
+    #[default]
+    #[serde(other)]
+    Story,
+}
+
+/// Who a chat is with, as the sidebar shows them before the chat is read.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Partner {
+    /// The library character they were cast from (see [`CastMember::id`]).
+    pub id: String,
+    /// Their name.
+    pub name: String,
+    /// Portrait file name in [`Portraits`](crate::Portraits); empty for none.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub portrait: String,
+    /// Their colour as `#rrggbb`; empty for one picked from their name.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub color: String,
+}
+
 /// One saved conversation.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -93,11 +124,15 @@ pub struct Session {
     pub created: u64,
     /// Last activity, seconds since the Unix epoch.
     pub updated: u64,
+    /// A story told by a cast, or a chat with one character.
+    #[serde(skip_serializing_if = "is_default")]
+    pub mode: Mode,
     /// Id of the [`World`](crate::World) this story is played in; `None` for
-    /// a plain chat.
+    /// a chat with a character, or a plain chat from before worlds.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub world: Option<String>,
-    /// The characters taking part in this story.
+    /// The characters taking part in this story; in a chat, the one
+    /// character it is with.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub cast: Vec<CastMember>,
     /// Who the user plays; `None` until they say.
@@ -221,8 +256,16 @@ pub struct ToolResult {
 
 impl Session {
     /// The format this version of the app writes; 2 added cast members'
-    /// examples and lore, greetings swiped between and the player's portrait.
-    pub const VERSION: u32 = 2;
+    /// examples and lore, greetings swiped between and the player's portrait;
+    /// 3 added chats with one character (`mode`), which an older version
+    /// would take for a plain chat and break.
+    pub const VERSION: u32 = 3;
+
+    /// Who a chat is with: its cast's one member. `None` for a story.
+    #[must_use]
+    pub fn partner(&self) -> Option<&CastMember> {
+        if self.mode == Mode::Chat { self.cast.first() } else { None }
+    }
 
     /// Total spent on this session in USD, the replies swiped away included.
     #[must_use]
@@ -255,7 +298,14 @@ impl Session {
             title: self.title.clone(),
             created: self.created,
             updated: self.updated,
+            mode: self.mode,
             world: self.world.clone(),
+            partner: self.partner().map(|m| Partner {
+                id: m.id.clone(),
+                name: m.name.clone(),
+                portrait: m.portrait.clone(),
+                color: m.color.clone(),
+            }),
             cost: self.cost(),
             tokens: self.tokens(),
         }
@@ -275,9 +325,15 @@ pub struct SessionSummary {
     pub created: u64,
     /// Last activity, seconds since the Unix epoch.
     pub updated: u64,
+    /// A story, or a chat with one character.
+    #[serde(skip_serializing_if = "is_default")]
+    pub mode: Mode,
     /// The world played in, if any.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub world: Option<String>,
+    /// Who a chat is with.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub partner: Option<Partner>,
     /// Total spent in USD.
     pub cost: f64,
     /// Total tokens billed.
@@ -1010,6 +1066,23 @@ mod tests {
         message.change = Some(change);
         let json = serde_json::to_string(&message).unwrap();
         assert_eq!(serde_json::from_str::<StoredMessage>(&json).unwrap(), message);
+    }
+
+    #[test]
+    fn chats_know_their_partner() {
+        let mira =
+            CastMember { id: "m".into(), name: "Mira".into(), portrait: "m.png".into(), ..CastMember::default() };
+        let story = Session { cast: vec![mira.clone()], ..Session::default() };
+        assert!(story.partner().is_none() && story.summary().partner.is_none(), "a story's cast is no partner");
+        let chat = Session { mode: Mode::Chat, cast: vec![mira], ..Session::default() };
+        let summary = chat.summary();
+        assert_eq!((summary.mode, summary.partner.map(|p| p.portrait)), (Mode::Chat, Some("m.png".to_owned())));
+        let json = serde_json::to_value(&chat).unwrap();
+        assert_eq!(json["mode"], "chat");
+        assert!(serde_json::to_value(&story).unwrap().get("mode").is_none(), "a story writes no mode");
+        assert_eq!(serde_json::from_value::<Session>(json).unwrap(), chat);
+        let unknown: Session = serde_json::from_str(r#"{"mode":"duet"}"#).unwrap();
+        assert_eq!(unknown.mode, Mode::Story);
     }
 
     #[test]

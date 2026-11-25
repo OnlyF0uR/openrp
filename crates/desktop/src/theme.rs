@@ -394,6 +394,7 @@ pub const fn icon(size: f32) -> Style {
 }
 
 #[cfg(test)]
+#[allow(clippy::float_cmp, reason = "the values compared are computed the same way, so exactly equal")]
 mod tests {
     use super::*;
 

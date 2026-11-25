@@ -1,6 +1,7 @@
 //! The sidebar: the library (worlds, characters, personas), then every
-//! saved story, newest first, each with its world's picture; the search and
-//! a new story are icons over them, the settings an icon at the foot.
+//! saved chat and story, newest first, each with its partner's portrait or
+//! its world's picture; the search, import and home are icons over them,
+//! the settings an icon at the foot.
 
 use openrp_core::unix_now;
 use winit::window::CursorIcon;
@@ -47,11 +48,11 @@ impl Chat {
         let search = Rect::new(add.x - 30.0, top, 28.0, 28.0);
         let import = Rect::new(search.x - 30.0, top, 28.0, 28.0);
         if ![add, search, import].into_iter().any(|tool| ui.hovered(tool)) {
-            p.label("STORIES", theme::CAPTION, INSET + 10.0, top + 7.0, t.text_faint);
+            p.label("RECENT", theme::CAPTION, INSET + 10.0, top + 7.0, t.text_faint);
         }
-        // A story starts from a world: a new one (Ctrl/Cmd+N) opens Worlds.
-        if tool(p, ui, add, icon::PLUS, &format!("New story  {PRIMARY_KEY}+N"), import.x - 8.0) {
-            self.show(Page::Library(Kind::World));
+        // Something new (Ctrl/Cmd+N) starts at home: a chat or a story.
+        if tool(p, ui, add, icon::PLUS, &format!("New chat or story  {PRIMARY_KEY}+N"), import.x - 8.0) {
+            self.go_home();
         }
         // Story files (exported from a story's menu) come back in.
         if tool(p, ui, import, icon::IMPORT, "Import stories", import.x - 8.0) {
@@ -85,7 +86,7 @@ impl Chat {
         let offset = self.sidebar_scroll.update(ui, ui.hovered(list));
         self.sidebar_scroll.finish(ui, content_h, list.h);
         if content_h == 0.0 {
-            p.label("No stories yet", theme::SMALL, INSET + 10.0, list.y + 6.0, t.text_faint);
+            p.label("No chats or stories yet", theme::SMALL, INSET + 10.0, list.y + 6.0, t.text_faint);
         }
 
         let clip = p.push_clip(list);
@@ -110,18 +111,31 @@ impl Chat {
             let selected = on_chat && conversation.id == self.current;
             p.rect(item, if selected { t.active } else { fade(t.hover, hover) }, theme::RADIUS);
 
-            // A story nobody named yet is called after its world.
-            let world = conversation.world.as_deref().and_then(|w| self.library.get(Kind::World, w));
-            let place = world.map(|w| w.name.as_str());
-            let (name, about) = match (conversation.title.as_str(), place) {
-                ("", Some(place)) => (place, "New story"),
-                ("", None) => ("New story", ""),
-                (title, place) => (title, place.unwrap_or("")),
-            };
-            // Its world's picture, as its face.
-            let picture = world.and_then(|w| self.library.portrait_path(&w.portrait));
             let face = Rect::new(item.x + 8.0, item.y + 8.0, 30.0, 30.0);
-            portrait(p, picture.as_deref(), (place.unwrap_or(name), ""), face, 8.0);
+            let partner = conversation.face();
+            let (name, about) = if let Some(partner) = &partner {
+                // A chat is named after who it is with; its first words follow.
+                let picture = self.library.portrait_path(&partner.portrait).filter(|_| !partner.portrait.is_empty());
+                portrait(p, picture.as_deref(), (&partner.name, &partner.color), face, 15.0);
+                let ink = theme::character_color(&t, &partner.name, &partner.color);
+                let ring = Rect::new(face.x - 1.5, face.y - 1.5, face.w + 3.0, face.h + 3.0);
+                p.bordered(ring, [0.0; 4], ring.w * 0.5, 1.0, fade(ink, 0.7));
+                let about = if conversation.title.is_empty() { "New chat" } else { conversation.title.as_str() };
+                (partner.name.as_str(), about)
+            } else {
+                // A story nobody named yet is called after its world.
+                let world = conversation.world.as_deref().and_then(|w| self.library.get(Kind::World, w));
+                let place = world.map(|w| w.name.as_str());
+                let (name, about) = match (conversation.title.as_str(), place) {
+                    ("", Some(place)) => (place, "New story"),
+                    ("", None) => ("New story", ""),
+                    (title, place) => (title, place.unwrap_or("")),
+                };
+                // Its world's picture, as its face.
+                let picture = world.and_then(|w| self.library.portrait_path(&w.portrait));
+                portrait(p, picture.as_deref(), (place.unwrap_or(name), ""), face, 8.0);
+                (name, about)
+            };
 
             // Right side: age, or the session's menu (duplicate, delete) while hovered.
             let mut on_control = false;

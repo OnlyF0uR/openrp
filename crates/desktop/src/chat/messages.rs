@@ -8,7 +8,7 @@ use openrp_core::{CastMember, Player, Role};
 
 use super::names::{self, Who};
 use super::tools::Part;
-use super::{Chat, Entry, Load, PRIMARY_KEY, Page, ReasoningView, SelPos, model_name, turns, usage_caption};
+use super::{Chat, Entry, Load, PRIMARY_KEY, ReasoningView, SelPos, model_name, turns, usage_caption};
 use crate::app::Action;
 use crate::doc::{Doc, INK_MUTED, INK_TEXT};
 use crate::form::FIELD_PAD;
@@ -16,7 +16,7 @@ use crate::library::{Kind, LibraryView, portrait};
 use crate::paint::{Color, Painter, Rect, fade, mix};
 use crate::text::{Align, TextLayout};
 use crate::theme::{self, Palette};
-use crate::ui::{ButtonStyle, Ui, button, icon, icon_button, id, keycap, logo};
+use crate::ui::{ButtonStyle, Ui, button, icon, icon_button, id};
 
 /// Vertical space between messages.
 const MESSAGE_GAP: f32 = 20.0;
@@ -110,9 +110,17 @@ impl Entry {
         height
     }
 
-    /// Rebuilds stale documents and returns the entry's height at `width`.
-    fn measure(&mut self, p: &Painter, width: f32, live: bool, story: bool, view: ReasoningView) -> f32 {
-        self.refresh_display(live, story);
+    /// Rebuilds stale documents and returns the entry's height at `width`;
+    /// `story` when it is told through characters (`partner`, in a chat).
+    fn measure(
+        &mut self,
+        p: &Painter,
+        width: f32,
+        live: bool,
+        (story, partner): (bool, Option<&str>),
+        view: ReasoningView,
+    ) -> f32 {
+        self.refresh_display(live, story, partner);
         let boxed = self.boxed();
         let summary = self.message.compaction && !boxed;
         let said = self.said(story);
@@ -213,18 +221,25 @@ impl Chat {
                 return;
             }
             Load::Loaded if conversation.entries.is_empty() => {
-                let world = conversation.world.as_deref().map(|id| self.library.get(Kind::World, id));
-                let path = world.flatten().and_then(|w| self.library.portrait_path(&w.portrait));
-                let story = world.map(|w| (w.map_or("A deleted world", |w| w.name.as_str()), path.as_deref()));
-                if draw_empty(p, ui, view, story) {
-                    self.show(Page::Library(Kind::World));
+                if let Some(partner) = conversation.chat_partner() {
+                    let path = self.library.portrait_path(&partner.portrait).filter(|_| !partner.portrait.is_empty());
+                    draw_hello(p, view, (&partner.name, &partner.color), path.as_deref());
+                    return;
                 }
+                let Some(world) = conversation.world.as_deref().map(|id| self.library.get(Kind::World, id)) else {
+                    self.draw_home(p, ui, view, actions);
+                    return;
+                };
+                let path = world.and_then(|w| self.library.portrait_path(&w.portrait));
+                draw_empty(p, view, (world.map_or("A deleted world", |w| w.name.as_str()), path.as_deref()));
                 return;
             }
             Load::Loaded => {}
         }
         let live_entry = conversation.stream.as_ref().map(|s| s.entry);
-        let story = conversation.world.is_some();
+        let story = conversation.roleplay();
+        let partner = conversation.chat_partner().map(|m| m.name.clone());
+        let partner = partner.as_deref();
         let started = conversation.stream.as_ref().map(|s| s.started);
         // Under the messages: a retry in progress, or the Continue button.
         let retry =
@@ -301,7 +316,7 @@ impl Chat {
                 p,
                 width,
                 live,
-                story,
+                (story, partner),
                 reasoning_view,
             ) + MESSAGE_GAP;
         }
@@ -370,7 +385,8 @@ impl Chat {
             let live = live_entry == Some(entry.id);
             let editing = edit_height(entry.id);
             let anchor = anchors[index].clone();
-            let height = entry_height(entry, editing, anchor.is_some(), p, width, live, story, reasoning_view);
+            let height =
+                entry_height(entry, editing, anchor.is_some(), p, width, live, (story, partner), reasoning_view);
             let area = Rect::new(x, y, width, height);
             y += height + MESSAGE_GAP;
             if entry.message.role == Role::User || index == 0 {
@@ -935,13 +951,13 @@ fn entry_height(
     p: &Painter,
     width: f32,
     live: bool,
-    story: bool,
+    voice: (bool, Option<&str>),
     view: ReasoningView,
 ) -> f32 {
     if let Some(height) = edit_h {
         return height;
     }
-    let height = entry.measure(p, width, live, story, view);
+    let height = entry.measure(p, width, live, voice, view);
     if anchor && entry.boxed() { height + META_H } else { height }
 }
 
@@ -1001,59 +1017,49 @@ fn selected_range(
     (from != to).then_some((from, to))
 }
 
-/// The welcome state of an empty conversation: the opening of a story in
-/// `story` (the world's name and portrait), or, outside any world, a way to
-/// pick one. Returns whether "Choose a world" was clicked.
-fn draw_empty(p: &mut Painter, ui: &mut Ui, view: Rect, story: Option<(&str, Option<&str>)>) -> bool {
+/// The opening of a story in a world nobody wrote in yet: the world's
+/// name and picture (`story`), and how a story begins.
+fn draw_empty(p: &mut Painter, view: Rect, (name, path): (&str, Option<&str>)) {
     let t = p.theme;
     let cx = view.x + view.w * 0.5;
-    let lift = if story.is_some_and(|(_, path)| path.is_some()) { 300.0 } else { 190.0 };
+    let lift = if path.is_some() { 200.0 } else { 120.0 };
     let top = view.y + (view.h * 0.5 - lift).max(24.0);
     let wrap = Some((view.w - 64.0).min(520.0));
-    let (title, subtitle, mut y) = if let Some((name, path)) = story {
-        // The world's picture, large, sets the mood; without one, its initial.
-        let side = if path.is_some() { ((view.w - 64.0).min(380.0), 212.0) } else { (88.0, 88.0) };
-        let picture = Rect::new((cx - side.0 * 0.5).round(), top, side.0, side.1);
-        portrait(p, path, (name, ""), picture, theme::RADIUS + 4.0);
-        p.bordered(picture, [0.0; 4], theme::RADIUS + 4.0, 1.0, fade(t.border_strong, 0.7));
-        (
-            name,
-            "Your story begins here. Say where you are and who you meet: the characters answer, and anyone not cast yet is created.",
-            picture.bottom() + 22.0,
-        )
-    } else {
-        logo(p, Rect::new(cx - 18.0, top, 36.0, 36.0));
-        ("Pick a world to play", "Stories happen in worlds: create one, or choose one and press Play.", top + 56.0)
-    };
-    let title = p.layout(title, if story.is_some() { theme::DISPLAY } else { theme::TITLE }, wrap);
+    // The world's picture, large, sets the mood; without one, its initial.
+    let side = if path.is_some() { ((view.w - 64.0).min(380.0), 212.0) } else { (88.0, 88.0) };
+    let picture = Rect::new((cx - side.0 * 0.5).round(), top, side.0, side.1);
+    portrait(p, path, (name, ""), picture, theme::RADIUS + 4.0);
+    p.bordered(picture, [0.0; 4], theme::RADIUS + 4.0, 1.0, fade(t.border_strong, 0.7));
+    let mut y = picture.bottom() + 22.0;
+    let title = p.layout(name, theme::DISPLAY, wrap);
     p.text_aligned(&title, cx - title.width() * 0.5, y, Align::Center, title.width(), t.text);
     y += title.height() + 8.0;
+    let subtitle = "Your story begins here. Say where you are and who you meet: the characters answer, and anyone not cast yet is created.";
     let subtitle = p.layout(subtitle, theme::SMALL, wrap);
     p.text_aligned(&subtitle, cx - subtitle.width() * 0.5, y, Align::Center, subtitle.width(), t.text_muted);
-    y += subtitle.height() + 20.0;
-    let mut choose = false;
-    if story.is_none() {
-        choose = button(p, ui, Rect::new(cx - 80.0, y, 160.0, 34.0), "Choose a world", ButtonStyle::Primary, true);
-        y += 34.0 + 24.0;
-    }
+}
 
-    // Keyboard shortcuts, listed for whoever is new here.
-    let key = |k: &str| format!("{PRIMARY_KEY}+{k}");
-    let shortcuts = [
-        ("Search everything", key("K")),
-        ("Play a world", key("N")),
-        ("New line", "Shift+Enter".to_owned()),
-        ("Stop reply", "Esc".to_owned()),
-        ("Settings", key(",")),
-    ];
-    let width = 280.0;
-    for (label, keys) in shortcuts {
-        let text = p.layout(label, theme::SMALL, None);
-        p.text(&text, cx - width * 0.5, y + (26.0 - text.height()) * 0.5, t.text_muted);
-        keycap(p, &keys, cx + width * 0.5, y + 3.0);
-        y += 30.0;
-    }
-    choose
+/// The opening of a chat nobody wrote in yet, with someone who has no
+/// greeting: their portrait, ringed in their colour, and an invitation.
+fn draw_hello(p: &mut Painter, view: Rect, (name, color): (&str, &str), path: Option<&str>) {
+    let t = p.theme;
+    let cx = view.x + view.w * 0.5;
+    let side = 132.0;
+    let top = view.y + (view.h * 0.5 - 150.0).max(24.0);
+    let face = Rect::new((cx - side * 0.5).round(), top, side, side);
+    let ink = theme::character_color(&t, name, color);
+    p.shadow(Rect::new(face.x, face.y + 8.0, face.w, face.h), fade(ink, 0.25), side * 0.5, 28.0);
+    portrait(p, path, (name, color), face, side * 0.5);
+    let ring = Rect::new(face.x - 4.0, face.y - 4.0, side + 8.0, side + 8.0);
+    p.bordered(ring, [0.0; 4], ring.w * 0.5, 2.0, fade(ink, 0.8));
+    let wrap = Some((view.w - 64.0).min(460.0));
+    let mut y = face.bottom() + 24.0;
+    let title = p.layout(name, theme::DISPLAY, wrap);
+    p.text_aligned(&title, cx - title.width() * 0.5, y, Align::Center, title.width(), t.text);
+    y += title.height() + 8.0;
+    let hint = format!("Say hello to start the chat. {name} answers in their own voice, and remembers what matters.");
+    let hint = p.layout(&hint, theme::SMALL, wrap);
+    p.text_aligned(&hint, cx - hint.width() * 0.5, y, Align::Center, hint.width(), t.text_muted);
 }
 
 #[cfg(test)]

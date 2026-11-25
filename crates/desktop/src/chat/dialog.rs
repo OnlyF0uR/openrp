@@ -665,6 +665,7 @@ impl Chat {
         let t = p.theme;
         let world =
             self.current().world.clone().and_then(|id| self.library.get(Kind::World, &id).map(|w| w.name.clone()));
+        let partner = self.current().chat_partner().map(|m| m.name.clone());
         // The story's model and effort, as the direction form has them.
         let story_model = self.direction_model().map(|(model, reasoning)| {
             (model_name(&self.models, model).to_owned(), usable(&self.models, model, reasoning).label())
@@ -719,6 +720,14 @@ impl Chat {
         };
 
         let (title, note, submit, labels, hints) = match &subject {
+            Subject::Player if partner.is_some() => (
+                partner.as_ref().map_or_else(String::new, |p| format!("Who is {p} talking to?")),
+                "You, in this chat: the AI plays only them, and never speaks or acts for you. Star a persona to skip \
+                 this next time.",
+                if editing { "Save" } else { "Begin" },
+                ["Name", "Description"],
+                ["Your name", "Who you are to them: background, appearance, what you want…"],
+            ),
             Subject::Player => (
                 world.as_ref().map_or_else(|| "Who are you?".to_owned(), |w| format!("Who are you in {w}?")),
                 "Your character in this story. The AI plays everyone else, and never speaks or acts for you.",
@@ -728,7 +737,11 @@ impl Chat {
             ),
             Subject::Member(_) | Subject::NewMember => (
                 if subject == Subject::NewMember { "New character" } else { "Edit character" }.to_owned(),
-                "For this story only: the character library keeps its own copies.",
+                if partner.is_some() {
+                    "For this chat only: the character library keeps its own copy."
+                } else {
+                    "For this story only: the character library keeps its own copies."
+                },
                 if subject == Subject::NewMember { "Add" } else { "Save" },
                 ["Name", "Description"],
                 ["Their name", "Who they are: role, personality, appearance, how they speak…"],

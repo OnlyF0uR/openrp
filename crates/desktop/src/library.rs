@@ -130,8 +130,12 @@ impl Kind {
     fn blurb(self) -> &'static str {
         match self {
             Self::World => "Settings for your stories, like Panem or a galaxy far, far away. Click one to play it.",
-            Self::Character => "People the AI plays, ready to cast in any story. A story keeps its own copy.",
-            Self::Persona => "Who you play, ready for any story that asks. The starred one fills in by itself.",
+            Self::Character => {
+                "People the AI plays. Click one to chat with them, or Play them in a world's story. Each keeps its own copy."
+            }
+            Self::Persona => {
+                "Who you play, in any chat or story. The starred one is who you are, unless you say otherwise."
+            }
         }
     }
 
@@ -177,6 +181,8 @@ impl Section {
 pub enum Event {
     /// Start a story in this world.
     Play(String),
+    /// Open the chat with the character with this id (or start one).
+    Chat(String),
     /// Choose a world to play the character with this id in; the menu
     /// opens below the rectangle.
     PlayCharacter(String, Rect),
@@ -1359,7 +1365,7 @@ impl LibraryView {
             y = at.1 + CHIP_H + 14.0;
         }
 
-        let (mut opened, mut play, mut star, mut clear) = (None, None, None, false);
+        let (mut opened, mut play, mut chat, mut star, mut clear) = (None, None, None, None, false);
         if rows.is_empty() {
             p.label(&format!("No {} match.", kind.plural().to_lowercase()), theme::SMALL, x, y + 8.0, t.text_muted);
             clear = button(
@@ -1438,8 +1444,8 @@ impl LibraryView {
                     }
                 }
             }
-            // Worlds play when clicked; their Edit shows on hover.
-            if kind == Kind::World && hovered {
+            // Worlds play and characters chat when clicked; their Edit shows on hover.
+            if kind != Kind::Persona && hovered {
                 let edit_button = Rect::new(star_rect.x - 64.0, card.y + 8.0, 58.0, 26.0);
                 on_control |= edit_button.contains(ui.mouse);
                 if button(p, ui, edit_button, "Edit", ButtonStyle::Secondary, true) {
@@ -1449,10 +1455,10 @@ impl LibraryView {
             if hovered && !on_control {
                 ui.cursor = CursorIcon::Pointer;
                 if ui.clicked(card) {
-                    if kind == Kind::World {
-                        play = Some(record.id.clone());
-                    } else {
-                        opened = Some(index);
+                    match kind {
+                        Kind::World => play = Some(record.id.clone()),
+                        Kind::Character => chat = Some(record.id.clone()),
+                        Kind::Persona => opened = Some(index),
                     }
                 }
             }
@@ -1483,7 +1489,7 @@ impl LibraryView {
             self.form = Some(Form::new(kind, Some(record)));
             self.scroll = 0.0;
         }
-        play.map(Event::Play)
+        play.map(Event::Play).or(chat.map(Event::Chat))
     }
 
     /// The open form: portrait, name, tags and description, the sections,
@@ -1529,7 +1535,13 @@ impl LibraryView {
         let has_name = !form.fields.text(NAME).trim().is_empty();
         let saved = button(p, ui, save, "Save", ButtonStyle::Primary, has_name && !form.locked);
         let mut right = save.x - 8.0;
-        let mut play = None;
+        let (mut play, mut chat) = (None, false);
+        // A character is chatted with, or played in a world's story.
+        if !form.new && kind == Kind::Character {
+            let chat_button = Rect::new(right - 72.0, back.y, 72.0, 30.0);
+            chat = button(p, ui, chat_button, "Chat", ButtonStyle::Secondary, has_name);
+            right = chat_button.x - 8.0;
+        }
         // Personas are played from a story's "who are you?".
         if !form.new && kind != Kind::Persona {
             let play_button = Rect::new(right - 72.0, back.y, 72.0, 30.0);
@@ -1800,6 +1812,10 @@ impl LibraryView {
                 Some(form) if form.dirty() && !form.confirm_discard => form.confirm_discard = true,
                 _ => self.form = None,
             }
+        } else if chat {
+            // Chat with who is shown: unsaved edits are saved first.
+            self.commit(actions);
+            return Some(Event::Chat(id));
         } else if let Some(anchor) = play {
             // Play what is shown: unsaved edits are saved first.
             if kind == Kind::World {

@@ -11,7 +11,24 @@ cargo clippy --workspace --all-targets
 
 ## What it does
 
-- **Chat** with any model your provider offers, with per-reply token captions (and prices and
+- **Two ways to play**, both from **Home** (the **+** over the sidebar's list, or Ctrl/Cmd+N): a
+  **chat** with one character, or a **story** in a world with a whole cast. Home shows your
+  characters as portraits (starred ones, then those you chatted with lately) and your worlds as
+  pictures; a click starts. With an empty library it offers to create the first, or import a card.
+- **Chats with a character**: one-on-one, like Character.AI. Clicking a character (on Home, on the
+  Characters page, or **Chat** in their form, or "Chat with …" in Spotlight) opens your latest chat
+  with them, or starts one. It begins at once as your starred persona (or your only one), with their
+  greeting and its alternates to swipe; without one it first asks who you are. They answer in plain
+  text, in first person with their actions in *asterisks*: no tools and a short, plain prompt, so
+  small local models (Gemma and the like) keep up. Others can be mentioned, but only they speak.
+  What small models add around a reply (their own name in front, a line written for you) is cut
+  away. Everything else works as in a story: bubbles in their colour, Edit, Regenerate, swipes,
+  Write for me, OOC, memories (kept by the review every 8 messages, or `/memorize`), Direction, lore
+  from their card, summaries, export. The panel beside a chat is their profile: their portrait,
+  who they are (click to edit this chat's copy), Memories and Direction, who you are, and **New
+  chat**, which starts another with them and keeps this one. The sidebar lists a chat under their
+  face and name.
+- **Any model** your provider offers, with per-reply token captions (and prices and
   costs, for a provider that lists them). Each story keeps its own model and reasoning effort,
   picked in its **Direction**. While a thinking model works, the reply
   shows "Thinking for 4s"; afterwards "Thought for 12s" expands to its reasoning. Settings
@@ -30,10 +47,11 @@ cargo clippy --workspace --all-targets
   Typing on a page filters it (names, tags, comments and descriptions; Esc clears it), the chips under the filter narrow it to tags or to the
   **★ Favorites**, and the star on a card sets one. A form with unsaved changes is kept as a
   draft when you look elsewhere, and reopens with its page; going back or Esc discards it only
-  on a second press. Its **⋯** duplicates, exports (characters) or deletes. A character's form
+  on a second press. Its **⋯** duplicates, exports (characters) or deletes. Clicking a world plays
+  it and clicking a character chats with them; **Edit** shows on hover. A character's form
   has **Generate**: the AI writes a name and a short description from whatever name or idea you
-  typed (or anyone, if blank), for you to review and save; and **Play**, which asks which world
-  to meet them in.
+  typed (or anyone, if blank), for you to review and save; **Chat**; and **Play**, which asks
+  which world to meet them in.
 - **More than a description, out of sight until wanted**: under the description, sections open
   on click. A character's **Greetings**: their first message, which opens a story they are in
   before anyone writes, and alternates to swipe to with **‹ ›** (`{{user}}` and `{{char}}`
@@ -56,7 +74,7 @@ cargo clippy --workspace --all-targets
   over. One card opens to review; several are listed first. **Export card** (in a character's ⋯)
   writes one back: a PNG made from the portrait, holding both the V2 and V3 card, or JSON when
   there is no portrait.
-- **Stories**: Clicking a world (**Edit** opens its form) (Ctrl/Cmd+N opens the worlds) starts a session in it, which
+- **Stories**: Clicking a world (**Edit** opens its form) starts a session in it, which
   first asks who you play: your character's name, description and portrait, or one of your
   personas (**You** in the cast panel edits them later). **Begin** saves the story and lists it
   in the sidebar. The **cast panel** beside the story (over it, in a narrow window; the panel
@@ -174,7 +192,8 @@ cargo clippy --workspace --all-targets
 - **Duplicate, export and delete**: a session's ⋯ in the sidebar deletes it,
   or (like `/duplicate` and `/frame`) copies it exactly, with every message, memory and the
   scene (replies are not billed twice), or as a **frame**: the world, your character, the cast
-  and the direction, ready for a new story. **Export as text** saves a readable transcript.
+  and the direction, ready for a new story (for a chat, **Start over**: the same setup, opened
+  by their greeting again). **Export as text** saves a readable transcript.
   A notice then offers the folder it went to.
 - **Story files**: **Export story** in a session's ⋯ saves all of a story as one `.openrp` file,
   to back up or take to another computer: every message with its swipes, tool calls and costs,
@@ -194,14 +213,14 @@ cargo clippy --workspace --all-targets
   window, double-click it to maximize; on Windows and Linux with its own minimize, maximize and
   close buttons, and the window's edges resize it; macOS keeps its traffic lights). Below it the
   sidebar and the cast panel sit on the window, and the page floats between them on a rounded
-  canvas; on a dark scheme a story's world tints the top of it with its picture. The sidebar
-  lists the library (Worlds, Characters, Personas) and under it every story with its world's
-  picture; search and a new story are icons over the stories, the settings an icon at its
-  foot. Three schemes:
+  canvas; on a dark scheme a story's world (or a chat partner's portrait) tints the top of it. The
+  sidebar lists the library (Worlds, Characters, Personas) and under it, as **Recent**, every chat
+  (their face) and story (its world's picture); import, search and Home are icons over them, the
+  settings an icon at its foot. Three schemes:
   **Black** (the default), **White**, and **Amber**, a warm cream that is light but easy on the
   eyes, with little blue in it. Icons are Lucide's.
-- **Story titles**: a story is named after its first prompt; click its title in the header to
-  type another (Enter or a click elsewhere keeps it, Esc drops it).
+- **Story titles**: a story or chat is named after its first prompt; click its title in the header
+  to type another (Enter or a click elsewhere keeps it, Esc drops it).
 - **Settings**, a window over the page (Ctrl/Cmd+, or the cog; Esc, its cross or a click
   outside closes it) with a page per section: Appearance (Black, White and Amber schemes, reasoning display),
   Models (a **background model** for memory reviews, summaries and generated characters: a
@@ -261,13 +280,14 @@ cargo clippy --workspace --all-targets
   selection, links and incremental rebuilds while a reply streams. `highlight.rs` colours code.
 - `paint.rs`, `ui.rs`, `editor.rs`: drawing API, widgets and input state, text editing.
   `color.rs`: the colour picker.
-- `chat/`: the main screen (sidebar, composer, messages, menus); `chat/stream.rs` streams
-  replies, retries failed requests and compacts long conversations.
+- `chat/`: the main screen (sidebar, composer, messages, menus); `chat/home.rs` is Home;
+  `chat/stream.rs` streams replies, builds the story and chat prompts, retries failed requests and
+  compacts long conversations.
 - `spotlight.rs`, `settings.rs`, `login.rs`: the other surfaces.
 - `library.rs`: the Worlds, Characters and Personas pages (a grid of picture cards; filter, tags, favourites, card import), their
   form with its sections (greetings, example dialogue, lore) and portraits.
-- `chat/cast.rs`: Play, the cast panel and the story's system prompt and state (built in
-  `chat/stream.rs`); `chat/dialog.rs`: the form asking who you play, and the dialogs for cast
+- `chat/cast.rs`: Play and chats with a character (`Chat::chat_with`), the cast panel (a chat
+  partner's profile in a chat) and the system prompt and state (built in `chat/stream.rs`); `chat/dialog.rs`: the form asking who you play, and the dialogs for cast
   members, the scene, the direction and memories; `chat/tools.rs`: the `speak`,
   `create_character`, `update_character` and `remember` tools, how they show, and parsing
   their arguments while they stream; `chat/names.rs`: telling characters apart by name;
@@ -299,10 +319,11 @@ lives in `~/.openrp/`:
 
 - `config.toml`: the provider's base URL and key, the latest picked model and reasoning effort (for new stories), the background model, how reasoning shows, colour scheme, the window's
   size and the zoom. Lines a newer version added are kept as they are.
-- `sessions/<id>.json`: one file per story, with its world, your character, its cast (copies),
+- `sessions/<id>.json`: one file per story or chat (`mode`: a chat's cast is the one character
+  it is with), with its world, your character, its cast (copies),
   its scene, memories, model and effort, and direction (creativity, length, note), each reply's tool calls, and each reply's tokens and cost at the
-  prices of the time. `.index.json` next to them holds titles and totals, so startup reads
-  only the index; a session's messages load when it is opened.
+  prices of the time. `.index.json` next to them holds titles, totals and who a chat is with,
+  so startup reads only the index; a session's messages load when it is opened.
 - `worlds/<id>.json`, `characters/<id>.json` and `personas/<id>.json`: one file per world,
   character or persona, with its tags and star (and the lore of worlds and characters, and a
   character's greetings and example dialogue).

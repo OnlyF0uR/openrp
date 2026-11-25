@@ -444,16 +444,24 @@ pub fn reviewer_prompt(
 
 /// The latest `limit` characters of `messages` as a plain transcript for
 /// the memory review: one line per speaker, `player` for the user's
-/// messages, and scene changes in brackets. Out-of-character instructions,
-/// errors, summaries and the memories replies noted are left out.
+/// messages, `partner` for a chat's replies, and scene changes in brackets.
+/// Out-of-character instructions, errors, summaries and the memories
+/// replies noted are left out.
 #[must_use]
-pub fn transcript(messages: &[StoredMessage], player: &str, limit: usize) -> String {
+pub fn transcript(messages: &[StoredMessage], player: &str, partner: Option<&str>, limit: usize) -> String {
     let mut out = String::new();
     for message in messages.iter().filter(|m| !m.failed && !m.compaction) {
         if message.role == Role::User {
             let said = spoken(&message.content);
             if !said.is_empty() {
                 let _ = writeln!(out, "{player}: {said}\n");
+            }
+            continue;
+        }
+        if let Some(partner) = partner {
+            let said = chat_text(&message.content, partner, None);
+            if !said.is_empty() {
+                let _ = writeln!(out, "{partner}: {said}\n");
             }
             continue;
         }
@@ -478,6 +486,39 @@ pub fn transcript(messages: &[StoredMessage], player: &str, limit: usize) -> Str
         Some((at, c)) => format!("…{}", &out[at + c.len_utf8()..]),
         None => out.to_owned(),
     }
+}
+
+/// What a chat reply says as `partner`, cleaned of what small models add
+/// around it: a leading `Name:` (or `**Name**:`) for them is dropped from
+/// any line, and given the `player`'s name, the reply ends where it starts
+/// writing their lines (`Player:` at a line's start), which is never the
+/// partner's to write.
+#[must_use]
+pub fn chat_text(text: &str, partner: &str, player: Option<&str>) -> String {
+    let mut out = String::new();
+    for line in text.trim().lines() {
+        let line = match label(line) {
+            Some((name, said)) if names::same(name, partner) => said,
+            Some((name, _)) if player.is_some_and(|p| names::same(name, p)) => break,
+            _ => line,
+        };
+        out.push_str(line);
+        out.push('\n');
+    }
+    out.trim().to_owned()
+}
+
+/// The speaker a line opens with, as models label them (`Name:`,
+/// `**Name**:`, `**Name:**`, `*Name*:`), and what follows; `None` when it
+/// opens with no short name and a colon.
+fn label(line: &str) -> Option<(&str, &str)> {
+    let trimmed = line.trim_start();
+    let (head, rest) = trimmed.split_once(':')?;
+    // `**Name:**` leaves the closing marks after the colon.
+    let rest = rest.strip_prefix("**").or_else(|| rest.strip_prefix('*')).unwrap_or(rest);
+    let name = head.trim().trim_matches('*').trim();
+    let short = !name.is_empty() && name.chars().count() <= 40 && name.split_whitespace().count() <= 4;
+    (short && !name.contains(['.', ',', '!', '?', '"', '(', ')'])).then(|| (name, rest.trim_start()))
 }
 
 /// A greeting that opens a story: `character` saying `text`, as a reply
@@ -1128,13 +1169,19 @@ mod tests {
         failed.failed = true;
         let old = StoredMessage::new(Role::Assistant, "**Peeta**: Hello.".into());
         let messages = [StoredMessage::new(Role::User, "I wave.\n/ooc be brief".into()), reply, failed, old];
-        let text = transcript(&messages, "Gale", 10_000);
+        let text = transcript(&messages, "Gale", None, 10_000);
         assert_eq!(text, "Gale: I wave.\n\n[The woods.]\n\nKatniss: *lowers her bow* Stay back.\n\nPeeta: Hello.");
 
         // Only the end is kept, and never cut inside a character.
-        assert_eq!(transcript(&messages, "Gale", 6), "…Hello.");
-        assert_eq!(transcript(&[StoredMessage::new(Role::User, "ééé".into())], "G", 3), "…ééé");
-        assert!(transcript(&[], "Gale", 5).is_empty());
+        assert_eq!(transcript(&messages, "Gale", None, 6), "…Hello.");
+        assert_eq!(transcript(&[StoredMessage::new(Role::User, "ééé".into())], "G", None, 3), "…ééé");
+        assert!(transcript(&[], "Gale", None, 5).is_empty());
+        // A chat's replies are its partner's plain text.
+        let chat = [
+            StoredMessage::new(Role::User, "Hi.".into()),
+            StoredMessage::new(Role::Assistant, "Mira: *nods* Hey.".into()),
+        ];
+        assert_eq!(transcript(&chat, "Gale", Some("Mira"), 100), "Gale: Hi.\n\nMira: *nods* Hey.");
 
         let prompt = reviewer_prompt(
             Some(("Panem", "Twelve districts.")),
@@ -1159,6 +1206,20 @@ mod tests {
         assert_eq!(memories, ["Gale owes Peeta 5 coins.", "Prim is safe.", "Katniss lost her bow.", "Rue has healed."]);
         revise(&call(REMEMBER, &json!("not an object")), &shown, &mut memories);
         assert_eq!(memories.len(), 4, "a broken call changes nothing");
+    }
+
+    #[test]
+    fn chat_replies_are_cleaned_of_what_small_models_add() {
+        assert_eq!(chat_text("  Mira: *smiles* Hi.", "Mira", None), "*smiles* Hi.");
+        assert_eq!(chat_text("**Mira**: Hi.\n**Mira:** Again.", "mira", None), "Hi.\nAgain.");
+        // It stops where it starts writing for the user.
+        assert_eq!(chat_text("Hi.\n\nGale: Hello!\nMira: Ha.", "Mira", Some("Gale")), "Hi.");
+        assert_eq!(chat_text("Hi.\n\nGale: Hello!", "Mira", None), "Hi.\n\nGale: Hello!", "not without a name");
+        // Colons in prose stay.
+        assert_eq!(chat_text("Listen: it's late. Time: 3am.", "Mira", Some("Gale")), "Listen: it's late. Time: 3am.");
+        assert_eq!(chat_text("Gale: hi", "Mira", Some("Gale")), "");
+        assert_eq!(label("*Captain Rex*: Move."), Some(("Captain Rex", "Move.")));
+        assert_eq!(label("Well, here's the thing: no."), None);
     }
 
     #[test]

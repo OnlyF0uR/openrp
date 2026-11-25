@@ -154,11 +154,12 @@ impl Chat {
         if !conversation.settled() || index >= conversation.entries.len() {
             return;
         }
-        let story = conversation.world.is_some();
+        let story = conversation.roleplay();
+        let partner = conversation.chat_partner().map(|m| m.name.clone());
         let turn = turn(&conversation.entries, index);
         let mut slots = Vec::new();
         for entry in conversation.entries[turn].iter_mut().filter(|e| editable(e)) {
-            entry.refresh_display(false, story);
+            entry.refresh_display(false, story, partner.as_deref());
             if entry.parts.is_empty() {
                 if !entry.display.is_empty() {
                     slots.push(Slot { entry: entry.id, character: None, text: entry.display.clone() });
@@ -196,6 +197,8 @@ impl Chat {
         if conversation.load != Load::Loaded {
             return;
         }
+        // A chat's replies are plain text: an edit is their new text.
+        let chat = conversation.is_chat();
         let mut changed = false;
         let mut done = 0;
         while done < edit.slots.len() {
@@ -219,7 +222,7 @@ impl Chat {
                 continue;
             }
             let message = &mut conversation.entries[index].message;
-            if fields[0].0.character.is_some() {
+            if fields[0].0.character.is_some() && !chat {
                 let said: Vec<(&str, &str)> =
                     fields.iter().filter_map(|(slot, text)| Some((slot.character.as_deref()?, *text))).collect();
                 tools::respeak(&mut message.tool_calls, &said);
@@ -497,7 +500,7 @@ mod tests {
             matches!(&actions[..], [Action::SaveSession(s)] if s.messages[0].swipes.len() == 1 && s.messages.len() == 2)
         );
         let entry = conversation.entries.last_mut().unwrap();
-        entry.refresh_display(false, true);
+        entry.refresh_display(false, true, None);
         assert!(entry.display.ends_with("**Rue**: Hi."), "{}", entry.display);
 
         // And forward again; out of range does nothing.
@@ -546,7 +549,7 @@ mod tests {
         chat.save_turn_edit(&mut actions);
         let prompt = chat.current().entries[0].message.clone();
         let entry = &mut chat.current().entries[1];
-        entry.refresh_display(false, true);
+        entry.refresh_display(false, true, None);
         assert_eq!(
             entry.display,
             "*The woods.*\n\n*Rue joins the story*\n\n*Thresh joins the story*\n\n**Rue**: Hi. Changed.\n\n**Thresh**: *nods*",
@@ -569,7 +572,7 @@ mod tests {
         chat.turn_edit().unwrap().fields = Fields::multiline(&["Bye.".to_owned(), String::new()]);
         chat.save_turn_edit(&mut actions);
         let entry = &mut chat.current().entries[1];
-        entry.refresh_display(false, true);
+        entry.refresh_display(false, true, None);
         assert!(entry.display.ends_with("**Rue**: Bye.") && !entry.display.contains("**Thresh**"), "{}", entry.display);
         chat.edit_turn(1);
         chat.turn_edit().unwrap().fields = Fields::multiline(&[String::new()]);

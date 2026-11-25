@@ -14,6 +14,7 @@ mod cast;
 mod composer;
 mod dialog;
 pub mod export;
+mod home;
 mod impersonate;
 mod menu;
 mod messages;
@@ -30,8 +31,8 @@ use std::sync::atomic::Ordering;
 
 use arboard::Clipboard;
 use openrp_core::{
-    CastMember, Direction, Error, Model, Player, Role, Session, SessionSummary, StoredMessage, Story as StoryFile,
-    Usage, new_id, unix_now,
+    CastMember, Direction, Error, Mode, Model, Partner, Player, Role, Session, SessionSummary, StoredMessage,
+    Story as StoryFile, Usage, new_id, unix_now,
 };
 use winit::event::KeyEvent;
 use winit::keyboard::{Key, ModifiersState, NamedKey};
@@ -296,8 +297,9 @@ impl Entry {
     /// Rebuilds [`Entry::display`] if the message or its calls changed;
     /// `live` while the reply streams (its calls are still previews). In a
     /// `story`, a reply edited into plain text by earlier versions is read
-    /// back into bubbles.
-    fn refresh_display(&mut self, live: bool, story: bool) {
+    /// back into bubbles; in a chat with `partner`, every reply is their
+    /// bubble.
+    fn refresh_display(&mut self, live: bool, story: bool, partner: Option<&str>) {
         let calls: usize = if live {
             self.streaming_calls.iter().map(|c| c.arguments.len() + 1).sum()
         } else {
@@ -308,7 +310,15 @@ impl Entry {
             return;
         }
         self.display_key = key;
-        self.parts = if live {
+        let reply = self.message.role == Role::Assistant && !self.message.failed && !self.message.compaction;
+        self.parts = if let Some(partner) = partner.filter(|_| reply) {
+            let said = tools::chat_text(&self.message.content, partner, None);
+            if said.is_empty() {
+                Vec::new()
+            } else {
+                vec![tools::Part::Said { character: partner.to_owned(), text: said }]
+            }
+        } else if live {
             tools::parts(self.streaming_calls.iter().map(|c| (c.name.as_str(), c.arguments.as_str())))
         } else if !self.message.tool_calls.is_empty() {
             tools::reply_parts(&self.message)
@@ -375,8 +385,12 @@ struct Conversation {
     title: String,
     created: u64,
     updated: u64,
+    /// A story told by a cast, or a chat with one character.
+    mode: Mode,
+    /// Who a chat is with, from the index, until its cast is read.
+    partner: Option<Partner>,
     /// Id of the world the story is played in; `None` until Play (or for a
-    /// plain chat from before worlds).
+    /// chat, or a plain chat from before worlds).
     world: Option<String>,
     /// The characters taking part, present in the scene or not.
     cast: Vec<CastMember>,
@@ -427,6 +441,8 @@ impl Conversation {
             title: String::new(),
             created: now,
             updated: now,
+            mode: Mode::Story,
+            partner: None,
             world: None,
             cast: Vec::new(),
             player: None,
@@ -457,6 +473,8 @@ impl Conversation {
             title: summary.title,
             created: summary.created,
             updated: summary.updated,
+            mode: summary.mode,
+            partner: summary.partner,
             world: summary.world,
             load: Load::Summary,
             indexed_cost: summary.cost,
@@ -480,6 +498,7 @@ impl Conversation {
             title: self.title.clone(),
             created: self.created,
             updated: self.updated,
+            mode: self.mode,
             world: self.world.clone(),
             cast: self.cast.clone(),
             player: self.player.clone(),
@@ -522,15 +541,52 @@ impl Conversation {
         self.stream.is_some() || self.retry.is_some()
     }
 
-    /// Whether the user can write in it: a story whose player is known, or
-    /// one (or an older chat) that already has messages.
+    /// Whether the user can write in it: a story or chat whose player is
+    /// known, or one (or an older chat) that already has messages.
     fn playable(&self) -> bool {
-        !self.entries.is_empty() || (self.world.is_some() && self.player.is_some())
+        !self.entries.is_empty() || (self.roleplay() && self.player.is_some())
     }
 
-    /// A new story that still needs to know who the user plays.
+    /// A new story or chat that still needs to know who the user plays.
     fn needs_player(&self) -> bool {
-        self.world.is_some() && self.player.is_none() && self.is_fresh()
+        self.roleplay() && self.player.is_none() && self.is_fresh()
+    }
+
+    /// A chat with one character, who answers in plain text.
+    fn is_chat(&self) -> bool {
+        self.mode == Mode::Chat
+    }
+
+    /// A story told by its cast through tools: played in a world.
+    fn is_story(&self) -> bool {
+        self.mode == Mode::Story && self.world.is_some()
+    }
+
+    /// Told through characters, a story's cast or a chat's partner: their
+    /// replies and the user's messages show as bubbles. Only plain chats
+    /// from before worlds are not.
+    fn roleplay(&self) -> bool {
+        self.is_chat() || self.world.is_some()
+    }
+
+    /// Who a chat is with; `None` for a story (or before its cast is read).
+    fn chat_partner(&self) -> Option<&CastMember> {
+        if self.is_chat() { self.cast.first() } else { None }
+    }
+
+    /// Who a chat is with, as the sidebar shows them: from its cast once
+    /// read, from the index before.
+    fn face(&self) -> Option<Partner> {
+        match self.chat_partner() {
+            Some(m) => Some(Partner {
+                id: m.id.clone(),
+                name: m.name.clone(),
+                portrait: m.portrait.clone(),
+                color: m.color.clone(),
+            }),
+            None if self.is_chat() => self.partner.clone(),
+            None => None,
+        }
     }
 }
 
@@ -871,6 +927,13 @@ impl Chat {
         }
     }
 
+    /// Shows the home screen: a new conversation, which becomes a chat or a
+    /// story from there.
+    fn go_home(&mut self) {
+        (self.menu, self.settings_open) = (None, false);
+        self.new_conversation();
+    }
+
     /// Opens an empty conversation in no world, reusing an empty one.
     fn new_conversation(&mut self) {
         // An unbegun one is replaced: the new story is listed first once begun.
@@ -1091,12 +1154,13 @@ impl Chat {
         if conversation.entries.is_empty() || conversation.load != Load::Loaded {
             return;
         }
-        let (id, world, cast, player) =
-            (conversation.id, conversation.world.clone(), conversation.cast.clone(), conversation.player.clone());
+        let (id, mode, world) = (conversation.id, conversation.mode, conversation.world.clone());
+        let (cast, player) = (conversation.cast.clone(), conversation.player.clone());
         let (note, direction) = (conversation.note.clone(), conversation.direction);
         let (model, reasoning) = (conversation.model.clone(), conversation.reasoning);
         self.delete_conversation(id, actions);
         let fresh = self.current();
+        fresh.mode = mode;
         fresh.world = world;
         fresh.cast = cast;
         fresh.player = player;
@@ -1140,6 +1204,7 @@ impl Chat {
         cast.retain(|m| !m.name.is_empty());
         let conversation = &mut self.conversations[index];
         conversation.entries = entries;
+        conversation.mode = session.mode;
         conversation.world = session.world;
         conversation.cast = cast;
         conversation.player = session.player;
@@ -1444,6 +1509,7 @@ impl Chat {
                 self.library.open_form(Kind::Persona, &id);
             }
             Pick::Play(world) => self.play(world),
+            Pick::Chat(character) => self.chat_with(&character, false, actions),
             Pick::Theme(scheme) => actions.push(Action::SetTheme(scheme)),
             Pick::Session(session) => {
                 if let Some(id) = self.conversations.iter().find(|c| c.session_id == session).map(|c| c.id) {
@@ -1498,8 +1564,8 @@ impl Chat {
             Key::Named(NamedKey::Escape) if self.settings_open => self.settings_open = false,
             Key::Character(c) if primary && is(c, "k") => self.open_spotlight(),
             Key::Character(c) if primary && is(c, ",") => self.toggle_settings(),
-            // A story starts from a world.
-            Key::Character(c) if primary && is(c, "n") => self.show(Page::Library(Kind::World)),
+            // Home: a chat with a character, or a story in a world.
+            Key::Character(c) if primary && is(c, "n") => self.go_home(),
             _ if self.settings_open => self.settings.key(event, mods, cb, actions),
             _ if matches!(self.page, Page::Library(_)) => {
                 if !self.library.key(event, mods, cb, actions) && event.logical_key == Key::Named(NamedKey::Escape) {
@@ -1608,6 +1674,7 @@ impl Chat {
                 let stories = self.world_stories();
                 match self.library.draw(p, ui, main, kind, &stories, actions) {
                     Some(LibraryEvent::Play(world)) => self.play(world),
+                    Some(LibraryEvent::Chat(character)) => self.chat_with(&character, false, actions),
                     Some(LibraryEvent::PlayCharacter(id, anchor)) => {
                         self.play_character = id;
                         self.open_library_menu(Menu::PlayIn, anchor);
@@ -1685,18 +1752,32 @@ impl Chat {
         }
         if let Some(spotlight) = &mut self.spotlight {
             ui.blocker = None;
+            // A chat is found by who it is with, as a story is by its world.
+            let partners: Vec<(u64, String, String)> = self
+                .conversations
+                .iter()
+                .filter_map(|c| c.face().map(|p| (c.id, format!("Chat with {}", p.name), p.name)))
+                .collect();
             let context = crate::spotlight::Context {
                 sessions: self
                     .conversations
                     .iter()
                     .filter(|c| !c.is_fresh())
                     .map(|c| {
-                        let world = c
-                            .world
-                            .as_deref()
-                            .and_then(|w| self.library.get(Kind::World, w))
-                            .map_or("", |w| w.name.as_str());
-                        crate::spotlight::SessionRef { id: &c.session_id, title: &c.title, world, updated: c.updated }
+                        let partner = partners.iter().find(|(id, ..)| *id == c.id);
+                        let world = match partner {
+                            Some((_, _, name)) => name.as_str(),
+                            None => c
+                                .world
+                                .as_deref()
+                                .and_then(|w| self.library.get(Kind::World, w))
+                                .map_or("", |w| w.name.as_str()),
+                        };
+                        let title = match partner {
+                            Some((_, untitled, _)) if c.title.is_empty() => untitled.as_str(),
+                            _ => c.title.as_str(),
+                        };
+                        crate::spotlight::SessionRef { id: &c.session_id, title, world, updated: c.updated }
                     })
                     .collect(),
                 worlds: self.library.list(Kind::World),
@@ -1737,10 +1818,15 @@ impl Chat {
         let conversation = self.current();
         let (tokens, cost) = (conversation.tokens(), conversation.cost());
         let (world, title) = (conversation.world.clone(), conversation.title.clone());
+        let partner = conversation.face();
         let world = world.map(|id| self.library.get(Kind::World, &id));
-        // The world's colours wash the top of the canvas and fade into it;
-        // on a light page a tint only muddies it.
-        let picture = world.flatten().and_then(|w| self.library.portrait_path(&w.portrait));
+        // The world's colours (or a chat partner's) wash the top of the
+        // canvas and fade into it; on a light page a tint only muddies it.
+        let picture = match &partner {
+            Some(partner) if !partner.portrait.is_empty() => self.library.portrait_path(&partner.portrait),
+            Some(_) => None,
+            None => world.flatten().and_then(|w| self.library.portrait_path(&w.portrait)),
+        };
         if let Some(path) = picture.filter(|_| !t.is_light()) {
             // Inside the canvas's outline, its top corners rounded like the
             // canvas; the lower ones fall below the clip, where it has faded.
@@ -1752,7 +1838,11 @@ impl Chat {
             p.gradient(wash, fade(t.bg, 0.4), t.bg, radius);
             p.set_clip(saved);
         }
-        let world = world.map(|w| w.map_or("A deleted world".to_owned(), |w| w.name.clone()));
+        // A chat is named after who it is with, a story after its world.
+        let world = match partner {
+            Some(partner) => Some(partner.name),
+            None => world.map(|w| w.map_or("A deleted world".to_owned(), |w| w.name.clone())),
+        };
 
         let mut right = bar.right() - 12.0;
         let mut toggled = false;
@@ -1808,7 +1898,9 @@ impl Chat {
         let mid = bar.y + bar.h * 0.5;
         let current = self.current;
         let Some((_, editor)) = self.title_edit.as_mut().filter(|(id, _)| *id == current) else {
-            let shown = if title.is_empty() { "Untitled" } else { title };
+            // A chat is named by its first message; before it, it is new.
+            let untitled = if self.current().is_chat() { "New chat" } else { "Untitled" };
+            let shown = if title.is_empty() { untitled } else { title };
             let mut layout = p.layout(shown, theme::LABEL, None);
             layout.truncate(p.fonts, (right - x).max(20.0));
             let rect = Rect::new(x - 8.0, mid - 15.0, layout.width() + 16.0, 30.0);
@@ -2149,6 +2241,7 @@ mod tests {
             title: "Hi".into(),
             created: 1,
             updated: 2,
+            mode: Mode::Story,
             world: None,
             cast: Vec::new(),
             player: None,
@@ -2701,7 +2794,7 @@ mod tests {
         let partial = r#"{"lines":[{"character":"Katniss","text":"Who's th"#;
         chat.stream_event(job.conversation, job.stream, StreamEvent::ToolCallDelta { index: 1, delta: partial.into() });
         let entry = chat.current().entries.last_mut().unwrap();
-        entry.refresh_display(true, true);
+        entry.refresh_display(true, true, None);
         assert_eq!(entry.display, "**Katniss**: Who's th", "no narration");
         let asked = ToolCall {
             call_id: "c0".into(),
@@ -2739,7 +2832,7 @@ mod tests {
             start_over(&mut chat, &next, Completion { tool_calls: vec![spoken], ..Completion::default() }).is_none()
         );
         let entry = chat.current().entries.last_mut().unwrap();
-        entry.refresh_display(false, true);
+        entry.refresh_display(false, true, None);
         assert_eq!(entry.display, "**Cato**: *grins* Found you.\n\n**Katniss**: Run!");
         assert_eq!(entry.message.tool_calls[0].output, "Spoken.");
         let follow = start(&mut chat, "I run.");
@@ -2760,7 +2853,7 @@ mod tests {
         );
         chat.stop(&mut Vec::new());
         let entry = chat.current().entries.last_mut().unwrap();
-        entry.refresh_display(false, true);
+        entry.refresh_display(false, true, None);
         assert_eq!(entry.display, "**Cato**: Wait", "speech being written when the user stops stays");
         assert!(entry.message.tool_calls[0].output.starts_with("Not run") && entry.message.content.is_empty());
         assert_eq!(
@@ -2839,7 +2932,7 @@ mod tests {
             chat.current().cast.iter().any(|m| m.name == "Rex" && m.description == "A clone captain." && m.present)
         );
         let entry = chat.current().entries.last_mut().unwrap();
-        entry.refresh_display(false, true);
+        entry.refresh_display(false, true, None);
         assert_eq!(entry.display, "*Rex joins the story*\n\n**Rex**: General.");
 
         // Someone acting without being introduced is not cast half-made: the

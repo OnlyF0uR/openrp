@@ -47,7 +47,7 @@ impl Chat {
     /// now: a story begun, loaded, with nothing on its way.
     pub(super) fn can_impersonate(&self) -> bool {
         self.conversations.iter().find(|c| c.id == self.current).is_some_and(|c| {
-            c.world.is_some()
+            c.roleplay()
                 && c.player.is_some()
                 && c.load == Load::Loaded
                 && !c.busy()
@@ -82,6 +82,7 @@ impl Chat {
         if !draft.is_empty() {
             let _ = write!(ask, "\n\n{}", DRAFT.replace("{draft}", &draft));
         }
+        let story = conversation.is_story();
         let cancel = Arc::new(AtomicBool::new(false));
         let job = SendJob {
             conversation: current,
@@ -91,9 +92,10 @@ impl Chat {
             instructions,
             history: conversation.entries.iter().map(|e| e.message.clone()).collect(),
             state: Some(format!("{state}\n\n{ask}")),
-            // Declared, as the history calls them; none is called.
-            tools: true,
-            tool_choice: Some(ToolChoice::None),
+            // A story's are declared, as its history calls them; none is
+            // called. A chat has none.
+            tools: story,
+            tool_choice: story.then_some(ToolChoice::None),
             temperature: None,
             cancel: Arc::clone(&cancel),
         };

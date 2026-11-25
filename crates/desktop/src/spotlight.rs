@@ -45,6 +45,8 @@ pub enum Pick {
     Play(String),
     /// Open a library character's form by id.
     Character(String),
+    /// Open the chat with a library character (or start one), by id.
+    Chat(String),
     /// Open a persona's form by id.
     Persona(String),
     /// Open a session by id.
@@ -201,6 +203,7 @@ impl Spotlight {
         };
 
         let commands = [
+            ("Chat with a character", "Talk one-on-one with someone from your library", Pick::Characters),
             ("Play a world", "Start a story in one of your worlds", Pick::Worlds),
             ("Worlds", "Settings for your stories", Pick::Worlds),
             ("Characters", "People the AI plays", Pick::Characters),
@@ -257,10 +260,12 @@ impl Spotlight {
                 open.into_iter().chain(play)
             });
             group("Worlds", worlds.collect());
-            group(
-                "Characters",
-                cx.characters.iter().filter_map(|c| record(c, "Character", Pick::Character(c.id.clone()))).collect(),
-            );
+            let characters = cx.characters.iter().flat_map(|c| {
+                let chat =
+                    row(&format!("Chat with {}", c.name), "", "Open the chat".into(), Pick::Chat(c.id.clone()), -10);
+                chat.into_iter().chain(record(c, "Character", Pick::Character(c.id.clone())))
+            });
+            group("Characters", characters.collect());
             group(
                 "Personas",
                 cx.personas.iter().filter_map(|c| record(c, "Persona", Pick::Persona(c.id.clone()))).collect(),
@@ -610,7 +615,11 @@ mod tests {
         );
         assert!(panem.contains(&("Worlds", Pick::Play("w1".into()))));
         // Characters match by name or description; nothing from the library shows until something is typed.
-        assert_eq!(picks("katn"), [("Characters", Pick::Character("c1".into()))]);
+        assert_eq!(
+            picks("katn"),
+            [("Characters", Pick::Character("c1".into())), ("Characters", Pick::Chat("c1".into()))],
+            "a character opens, or opens their chat"
+        );
         assert!(picks("district 12").contains(&("Characters", Pick::Character("c1".into()))));
         assert!(!picks("").iter().any(|(g, _)| matches!(*g, "Worlds" | "Characters")));
     }

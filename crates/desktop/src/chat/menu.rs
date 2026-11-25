@@ -183,10 +183,16 @@ impl Chat {
                 let items = self.member_menu(index);
                 content(anchors[1], 260.0, true, (&title, ""), items)
             }
-            Menu::Session(_) => {
+            Menu::Session(id) => {
+                let chat = self.conversations.iter().any(|c| c.id == id && c.is_chat());
+                let frame = if chat {
+                    MenuItem::new("Start over", "A new chat, same setup")
+                } else {
+                    MenuItem::new("Duplicate frame", "Cast and setup only")
+                };
                 let items = vec![
                     MenuItem::new("Duplicate", "Exact copy"),
-                    MenuItem::new("Duplicate frame", "Cast and setup only"),
+                    frame,
                     MenuItem::new("Export story", "Full backup file"),
                     MenuItem::new("Export as text", "Readable transcript"),
                     MenuItem::new("Delete", ""),

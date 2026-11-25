@@ -31,7 +31,7 @@ pub use error::{Error, Result};
 pub use library::{Character, Library, LoreEntry, Persona, Portraits, World};
 pub use responses::{Completion, InputItem, ResponseRequest, Role, StreamEvent, ToolCall, ToolChoice, ToolSpec, Usage};
 pub use session::{
-    CastMember, Creativity, Direction, Length, Player, SearchHit, Session, SessionStore, SessionSummary, StoredMessage,
-    StoryChange, ToolResult, new_id, rename, unix_now,
+    CastMember, Creativity, Direction, Length, Mode, Partner, Player, SearchHit, Session, SessionStore, SessionSummary,
+    StoredMessage, StoryChange, ToolResult, new_id, rename, unix_now,
 };
 pub use story::{STORY_EXTENSION, Story, read_story, write_story};

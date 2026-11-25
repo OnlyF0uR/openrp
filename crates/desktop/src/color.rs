@@ -338,6 +338,7 @@ pub fn rgb_to_hsv([red, green, blue]: [f32; 3]) -> (f32, f32, f32) {
 }
 
 #[cfg(test)]
+#[allow(clippy::float_cmp, reason = "the values compared are computed the same way, so exactly equal")]
 mod tests {
     use super::*;
 
