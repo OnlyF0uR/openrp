@@ -1,7 +1,8 @@
 //! A chat's character, where a chat shows them. A chat has no side panel:
 //! its character is introduced atop the conversation (portrait, name, who
-//! they are, and links to edit them and who the user is), and what directs
-//! the chat sits in the header: Memories, Direction and a new chat with them.
+//! they are, and a link to edit them), and what directs the chat sits in
+//! the header: Memories, Direction (who the user is among it) and a new
+//! chat with them.
 
 use winit::window::CursorIcon;
 
@@ -34,17 +35,6 @@ pub(super) struct Intro {
     path: Option<String>,
     /// Who they are, on one line (the layout wraps it).
     about: String,
-    /// Who the user is in the chat.
-    player: String,
-}
-
-/// What a click on the introduction asks for.
-#[derive(Clone, Copy)]
-pub(super) enum IntroClick {
-    /// Edit this chat's copy of the character.
-    Partner,
-    /// Edit who the user is.
-    Player,
 }
 
 impl Chat {
@@ -58,16 +48,7 @@ impl Chat {
             color: partner.color.clone(),
             path,
             about: partner.description.split_whitespace().collect::<Vec<_>>().join(" "),
-            player: conversation.player.as_ref().map(|p| p.name.clone()).unwrap_or_default(),
         })
-    }
-
-    /// Does what a click on the introduction asked for.
-    pub(super) fn intro_clicked(&mut self, click: IntroClick) {
-        match click {
-            IntroClick::Partner => self.edit_member(0),
-            IntroClick::Player => self.edit_player(),
-        }
     }
 
     /// Draws the header's actions of the open chat, ending at `right` in
@@ -148,15 +129,15 @@ fn about_height(p: &Painter, about: &str, wrap: f32) -> f32 {
 }
 
 /// Draws `intro` at `y`, centred in the column from `x`, `width` wide:
-/// their portrait ringed in their colour, their name, who they are, and
-/// links to edit them and who the user is. Returns what was clicked.
+/// their portrait ringed in their colour, their name, who they are, and a
+/// link to edit them. Returns whether it was clicked.
 pub(super) fn draw_intro(
     p: &mut Painter,
     ui: &mut Ui,
     (x, y, width): (f32, f32, f32),
     intro: &Intro,
     interactive: bool,
-) -> Option<IntroClick> {
+) -> bool {
     let t = p.theme;
     let cx = (x + width * 0.5).round();
     let wrap = width.min(ABOUT_W);
@@ -181,32 +162,17 @@ pub(super) fn draw_intro(
     }
     y += 12.0;
 
-    // Edit them · who the user is.
+    // Edit them, centred.
     let first = intro.name.split_whitespace().next().unwrap_or(&intro.name);
-    let edit = format!("Edit {first}");
-    let you = if intro.player.is_empty() { "Who are you?".to_owned() } else { format!("You are {}", intro.player) };
-    // Two links, a dot between them, centred.
-    let (edit_w, you_w) =
-        (p.layout(&edit, theme::SMALL, None).width() + 12.0, p.layout(&you, theme::SMALL, None).width() + 12.0);
-    let left = (cx - (edit_w + 16.0 + you_w) * 0.5).round();
-    p.rect(Rect::new(left + edit_w + 6.5, y + LINKS_H * 0.5 - 1.5, 3.0, 3.0), t.text_faint, 1.5);
-    let links = [
-        (Rect::new(left, y, edit_w, LINKS_H), edit, IntroClick::Partner),
-        (Rect::new(left + edit_w + 16.0, y, you_w, LINKS_H), you, IntroClick::Player),
-    ];
-    let mut clicked = None;
-    for (rect, label, click) in links {
-        let hovered = interactive && ui.hovered(rect);
-        let hover = ui.anim(id(("intro-link", rect.x.to_bits())), f32::from(u8::from(hovered)));
-        p.rect(rect, fade(t.hover, hover), theme::RADIUS_SM);
-        let text = p.layout(&label, theme::SMALL, None);
-        p.text(&text, rect.x + 6.0, rect.y + (LINKS_H - text.height()) * 0.5, mix(t.text_faint, t.text, hover));
-        if hovered {
-            ui.cursor = CursorIcon::Pointer;
-            if ui.clicked(rect) {
-                clicked = Some(click);
-            }
-        }
+    let text = p.layout(&format!("Edit {first}"), theme::SMALL, None);
+    let link_w = text.width() + 12.0;
+    let rect = Rect::new((cx - link_w * 0.5).round(), y, link_w, LINKS_H);
+    let hovered = interactive && ui.hovered(rect);
+    let hover = ui.anim(id("intro-link"), f32::from(u8::from(hovered)));
+    p.rect(rect, fade(t.hover, hover), theme::RADIUS_SM);
+    p.text(&text, rect.x + 6.0, rect.y + (LINKS_H - text.height()) * 0.5, mix(t.text_faint, t.text, hover));
+    if hovered {
+        ui.cursor = CursorIcon::Pointer;
     }
-    clicked
+    hovered && ui.clicked(rect)
 }

@@ -229,12 +229,12 @@ impl Chat {
                     let height = intro_height(p, width, &intro);
                     let top = (view.y + (view.h - height) * 0.42).max(view.y + 24.0).round();
                     let interactive = ui.hovered(view);
-                    let click = draw_intro(p, ui, (x, top, width), &intro, interactive);
+                    let edit = draw_intro(p, ui, (x, top, width), &intro, interactive);
                     let hint = p.layout("Say hello to start the chat.", theme::SMALL, None);
                     let hint_y = top + height - 36.0 + 18.0;
                     p.text(&hint, x + (width - hint.width()) * 0.5, hint_y, t.text_faint);
-                    if let Some(click) = click {
-                        self.intro_clicked(click);
+                    if edit {
+                        self.edit_member(0);
                     }
                     return;
                 }
@@ -391,9 +391,9 @@ impl Chat {
         let in_view = view.contains(ui.mouse) && ui.hovered(view);
         let clip = p.push_clip(view);
         let mut y = view.y + 24.0 - self.scroll.round();
-        let mut intro_click = None;
+        let mut edit_partner = false;
         if let Some(intro) = intro.as_ref().filter(|_| y + intro_h > view.y) {
-            intro_click = draw_intro(p, ui, (x, y, width), intro, in_view);
+            edit_partner = draw_intro(p, ui, (x, y, width), intro, in_view);
         }
         y += intro_h;
         let mut targets = Vec::new();
@@ -790,8 +790,8 @@ impl Chat {
         if effects.resume {
             self.resume(current, actions);
         }
-        if let Some(click) = intro_click {
-            self.intro_clicked(click);
+        if edit_partner {
+            self.edit_member(0);
         }
         match effects.turn {
             Some((TurnClick::Edit, index)) => self.edit_turn(index),

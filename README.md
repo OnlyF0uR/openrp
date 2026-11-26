@@ -27,14 +27,17 @@ cargo clippy --workspace --all-targets
   works as in a story: bubbles in their colour, Edit, Regenerate, swipes, Write for me, OOC,
   memories (kept by the review every 8 messages, or `/memorize`), Direction, lore from their card,
   summaries, export. A chat opens with who it is with, atop its messages: their portrait, name and
-  who they are, with **Edit** (this chat's copy of them) and who you are. The header holds
-  **Memories**, **Direction** and **New chat**, which starts another with them and keeps this one.
+  who they are, with **Edit** (this chat's copy of them). The header holds
+  **Memories**, **Direction** (who you are in the chat first, then the model, creativity, length and
+  note) and **New chat**, which starts another with them (in the same
+  direction, model and thinking) and keeps this one.
   **Continue** (the arrow under their last reply, or `/continue`) has them carry on their last reply.
   The sidebar lists a chat under their face and name, with its latest words.
 - **Any model** your provider offers, with per-reply token captions (and prices and
   costs, for a provider that lists them). Each story keeps its own model and reasoning effort,
   picked in its **Direction**. While a thinking model works, the reply
-  shows "Thinking for 4s"; afterwards "Thought for 12s" expands to its reasoning. Settings
+  shows "Thinking for 4s"; afterwards "Thought for 12s" expands to its reasoning (including
+  what models like Gemma write inside `<thought>` or `<think>` tags). Settings
   choose whether reasoning is hidden, collapsed or expanded.
 - **Markdown replies**: headings, lists and task lists, quotes, tables, links, inline code, and
   code blocks with syntax highlighting and a copy button. Code never wraps: wide blocks
@@ -234,7 +237,7 @@ cargo clippy --workspace --all-targets
   key in use; the data folder).
 - **Anthropic or any OpenAI-compatible provider**: until one is set, the app asks for its base
   URL and API key (left empty for a local server that needs none), with presets for Anthropic,
-  OpenRouter, Cloudflare (its `ACCOUNT_ID` selected, to paste over), Inworld, OpenAI and Ollama.
+  OpenRouter, Cloudflare (its `ACCOUNT_ID` selected, to paste over), Inworld, OpenAI, Gemini and Ollama.
   Every provider used before stays saved with its key and is listed above the form: **Use**
   switches to it, × forgets it. An address on `api.anthropic.com` is spoken to with
   Anthropic's Messages API, which caches the system prompt and the story so far and shows

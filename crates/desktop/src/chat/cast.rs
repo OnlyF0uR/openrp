@@ -71,8 +71,9 @@ impl Chat {
     }
 
     /// Opens the chat with library character `id`: the latest one with them,
-    /// or a new one when there is none (or `fresh` asks for one). A new
-    /// chat begins at once as the user's starred persona (or their only
+    /// or a new one when there is none (or `fresh` asks for one, from the
+    /// chat open now, whose direction, model and effort it goes on with). A
+    /// new chat begins at once as the user's starred persona (or their only
     /// one), with the character's greeting; without one, it first asks
     /// who the user is.
     pub(super) fn chat_with(&mut self, id: &str, fresh: bool, actions: &mut Vec<Action>) {
@@ -87,6 +88,9 @@ impl Chat {
             self.open(conversation, actions);
             return;
         }
+        let current = self.current();
+        let direction =
+            fresh.then(|| (current.note.clone(), current.direction, current.model.clone(), current.reasoning));
         self.new_conversation();
         let personas = self.library.list(Kind::Persona);
         let persona = self.library.default_persona().or(if personas.len() == 1 { personas.first() } else { None });
@@ -99,6 +103,9 @@ impl Chat {
         });
         let conversation = self.current();
         (conversation.mode, conversation.cast) = (Mode::Chat, vec![member]);
+        if let Some(direction) = direction {
+            (conversation.note, conversation.direction, conversation.model, conversation.reasoning) = direction;
+        }
         if let Some(player) = player {
             conversation.player = Some(player);
             actions.push(Action::SaveSession(conversation.to_session()));
@@ -622,7 +629,7 @@ fn cast_member(character: &Record) -> CastMember {
 
 #[cfg(test)]
 mod tests {
-    use openrp_core::{Character, Portraits, World};
+    use openrp_core::{Character, Creativity, Direction, Length, Portraits, World};
 
     use super::*;
     use crate::chat::Reasoning;
@@ -939,8 +946,11 @@ mod tests {
         chat.go_home();
         chat.chat_with("m", false, &mut actions);
         assert_eq!(chat.current().id, first, "the latest chat with her");
+        let direction = Direction { creativity: Creativity::Wild, length: Length::Short };
+        (chat.current().note, chat.current().direction) = ("Be brief.".into(), direction);
         chat.chat_with("m", true, &mut actions);
         assert_ne!(chat.current().id, first);
+        assert!(chat.current().note == "Be brief." && chat.current().direction == direction, "it goes on as directed");
     }
 
     #[test]

@@ -666,6 +666,8 @@ impl Chat {
         let world =
             self.current().world.clone().and_then(|id| self.library.get(Kind::World, &id).map(|w| w.name.clone()));
         let partner = self.current().chat_partner().map(|m| m.name.clone());
+        // Who the user is in a chat, which its direction form leads to.
+        let you = partner.as_ref().map(|_| self.current().player.as_ref().map_or_else(String::new, |p| p.name.clone()));
         // The story's model and effort, as the direction form has them.
         let story_model = self.direction_model().map(|(model, reasoning)| {
             (model_name(&self.models, model).to_owned(), usable(&self.models, model, reasoning).label())
@@ -797,7 +799,11 @@ impl Chat {
         let more_h = if more > 0 { 34.0 } else { 0.0 };
         let personas_h =
             if personas.is_empty() { 0.0 } else { 22.0 + card_rows * (PERSONA_H + 8.0) - 8.0 + more_h + 20.0 };
-        let direction_h = if matches!(subject, Subject::Direction(_)) { DIRECTION_H } else { 0.0 };
+        let direction_h = match subject {
+            Subject::Direction(_) if you.is_some() => DIRECTION_H + DIRECTION_ROW,
+            Subject::Direction(_) => DIRECTION_H,
+            _ => 0.0,
+        };
         let height = 24.0 + 30.0 + note_h + personas_h + direction_h + name_block + 22.0 + body_h + error_h + FOOTER_H;
         // Never taller than the window (at any zoom): what does not fit
         // scrolls, above buttons that stay in sight.
@@ -918,8 +924,13 @@ impl Chat {
             form.fields.draw(NAME, p, ui, Rect::new(x + name_x, y, inner - name_x, name_h), layout, hints[0], true);
             y += name_h + 20.0;
         }
-        let mut model_menu = None;
+        let (mut model_menu, mut edit_you) = (None, false);
         if let Subject::Direction(direction) = subject {
+            if let Some(you) = &you {
+                p.label("You", theme::LABEL, x, y + 8.0, t.text);
+                edit_you = dropdown(p, ui, Rect::new(x, y + 30.0, inner, 32.0), (None, you), false);
+                y += DIRECTION_ROW;
+            }
             if let Some((model, effort)) = &story_model {
                 model_menu = model_choices(p, ui, (x, y + 8.0, inner), (model, effort), open_menu);
             }
@@ -1009,6 +1020,10 @@ impl Chat {
             self.submit_form(actions);
         } else if cancelled {
             self.character_form = None;
+        } else if edit_you {
+            // Who the user is has a form of its own; the direction so far is kept.
+            self.submit_form(actions);
+            self.edit_player();
         }
         // The colour picker, over everything else.
         ui.blocker = covered;

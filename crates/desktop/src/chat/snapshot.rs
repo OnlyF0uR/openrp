@@ -57,6 +57,9 @@ fn snapshots() {
         dialog.edit_scene();
         let mut direction = story(&dir);
         direction.edit_direction();
+        // A chat's direction leads to who the user is.
+        let mut steer = chat(&dir);
+        steer.edit_direction();
         let mut rename = story(&dir);
         let mut editor = crate::editor::Editor::default();
         editor.insert("The heron letter");
@@ -92,6 +95,7 @@ fn snapshots() {
             ("spotlight", spotlight),
             ("dialog", dialog),
             ("direction", direction),
+            ("steer", steer),
             ("form", form),
             ("rename", rename),
             ("ooc", ooc),

@@ -12,6 +12,9 @@ use crate::responses::{Completion, InputItem, ResponseRequest, StreamEvent, Tool
 
 /// Most tool calls one reply may make; a hostile stream can't grow past it.
 const MAX_CALLS: usize = 64;
+/// Tags some models (Gemma, DeepSeek on some servers) wrap their reasoning
+/// in inside the reply's text: opening and closing.
+const THOUGHT: [(&str, &str); 2] = [("<thought>", "</thought>"), ("<think>", "</think>")];
 
 /// Streams a reply from `client`'s provider; see [`Client::stream_response`].
 pub(crate) fn stream(
@@ -25,6 +28,8 @@ pub(crate) fn stream(
     let done = read_events(response, cancel, on_event, |event, on_event| chunks.data(&event.data, on_event))?;
     // Some servers close the stream after the last chunk without `[DONE]`.
     if done || (chunks.finish.is_some() && !cancel.load(Ordering::Relaxed)) {
+        let held = std::mem::take(&mut chunks.held);
+        chunks.emit(&held, on_event);
         on_event(StreamEvent::Completed(chunks.completion()));
         return Ok(true);
     }
@@ -89,6 +94,10 @@ struct Chunks {
     usage: Usage,
     /// The choice's `finish_reason`, once sent.
     finish: Option<String>,
+    /// Whether the text is inside a thought tag.
+    thinking: bool,
+    /// The end of the text so far that may begin a tag, held until the next chunk.
+    held: String,
 }
 
 impl Chunks {
@@ -125,7 +134,7 @@ impl Chunks {
             on_event(StreamEvent::Reasoning(reasoning));
         }
         if let Some(content) = text("content") {
-            on_event(StreamEvent::Text(content));
+            self.content(&content, on_event);
         }
         for (position, call) in delta.get("tool_calls").and_then(Value::as_array).into_iter().flatten().enumerate() {
             let index = call.get("index").and_then(Value::as_u64).unwrap_or(position as u64);
@@ -157,6 +166,33 @@ impl Chunks {
             self.finish = Some(reason.to_owned());
         }
         Ok(false)
+    }
+
+    /// Passes on `content` as text, and what it says inside thought tags as
+    /// reasoning; a tag may be split across chunks.
+    fn content(&mut self, content: &str, on_event: &mut dyn FnMut(StreamEvent)) {
+        let mut rest = std::mem::take(&mut self.held) + content;
+        loop {
+            let tags = THOUGHT.map(|(open, close)| if self.thinking { close } else { open });
+            let Some((at, len)) = tags.iter().filter_map(|tag| rest.find(tag).map(|at| (at, tag.len()))).min() else {
+                // Hold back a `<` that may begin a tag; it is ASCII, so `at` is a char boundary.
+                let at = rest.rfind('<').filter(|&at| tags.iter().any(|tag| tag.starts_with(&rest[at..])));
+                self.held = rest.split_off(at.unwrap_or(rest.len()));
+                self.emit(&rest, on_event);
+                return;
+            };
+            self.emit(&rest[..at], on_event);
+            self.thinking = !self.thinking;
+            rest.drain(..at + len);
+        }
+    }
+
+    /// Passes on `text` as reasoning inside a thought tag, else as text.
+    fn emit(&self, text: &str, on_event: &mut dyn FnMut(StreamEvent)) {
+        if !text.is_empty() {
+            let text = text.to_owned();
+            on_event(if self.thinking { StreamEvent::Reasoning(text) } else { StreamEvent::Text(text) });
+        }
     }
 
     /// The finished reply, in the Responses API's terms.
@@ -254,6 +290,24 @@ mod tests {
             ToolCall { call_id: "c1".into(), name: "speak".into(), arguments: r#"{"a":1}"#.into() }
         );
         assert_eq!(done.tool_calls[1].call_id, "call_1", "a call without an id gets one");
+    }
+
+    #[test]
+    fn thought_tags_become_reasoning() {
+        let mut chunks = Chunks::default();
+        let mut events = Vec::new();
+        for content in ["<thou", "ght>Plan.</th", "ought>Hi <b> 2<3 <", "think>x</think>!<"] {
+            let data = json!({ "choices": [{ "delta": { "content": content } }] }).to_string();
+            chunks.data(&data, &mut |e| events.push(e)).unwrap();
+        }
+        assert_eq!(chunks.held, "<", "a trailing `<` waits for the next chunk");
+        let text: String =
+            events.iter().filter_map(|e| if let StreamEvent::Text(t) = e { Some(t.as_str()) } else { None }).collect();
+        let reasoning: String = events
+            .iter()
+            .filter_map(|e| if let StreamEvent::Reasoning(t) = e { Some(t.as_str()) } else { None })
+            .collect();
+        assert_eq!((text.as_str(), reasoning.as_str()), ("Hi <b> 2<3 !", "Plan.x"));
     }
 
     #[test]

@@ -18,12 +18,13 @@ use crate::ui::{ButtonStyle, Ui, button};
 /// Stands in a preset's address for what the user must fill in.
 const ACCOUNT: &str = "ACCOUNT_ID";
 /// Well-known APIs: name and API root.
-const PRESETS: [(&str, &str); 6] = [
+const PRESETS: [(&str, &str); 7] = [
     ("Anthropic", "https://api.anthropic.com/v1"),
     ("OpenRouter", "https://openrouter.ai/api/v1"),
     ("Cloudflare", "https://api.cloudflare.com/client/v4/accounts/ACCOUNT_ID/ai/v1"),
     ("Inworld", "https://api.inworld.ai/v1"),
     ("OpenAI", "https://api.openai.com/v1"),
+    ("Gemini", "https://generativelanguage.googleapis.com/v1beta/openai"),
     ("Ollama", "http://localhost:11434/v1"),
 ];
 /// The address field.
